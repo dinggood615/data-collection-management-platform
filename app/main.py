@@ -44,7 +44,14 @@ def dashboard_context() -> dict:
         keywords = db.execute("SELECT * FROM keywords WHERE enabled=1 ORDER BY term").fetchall()
         runs = db.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 8").fetchall()
         results = db.execute("SELECT * FROM tenders ORDER BY first_seen_at DESC LIMIT 20").fetchall()
-        custom_sites = db.execute("SELECT * FROM custom_sites ORDER BY id DESC").fetchall()
+        custom_sites = [dict(row) for row in db.execute("SELECT * FROM custom_sites ORDER BY id DESC")]
+    for site in custom_sites:
+        if site["status"] == "已适配（静态列表）":
+            site["next_step"] = "已可自动采集。确认启用后，点击“立即采集”可先进行一次人工检查。"
+        elif "JavaScript" in site["profile_note"] or "会话" in site["profile_note"]:
+            site["next_step"] = "1. 通过 SSH 隧道打开可视 Chrome；2. 自行完成网站允许的登录/验证；3. 回到这里点击“重新识别”。"
+        else:
+            site["next_step"] = "请确认填写的是公告列表页而非首页、详情页或搜索页；确认公开可访问后点击“重新识别”。"
     return {"sites": sites, "keywords": keywords, "runs": runs, "results": results, "custom_sites": custom_sites,
             "schedule": setting("schedule", "08:00"), "recipient": setting("recipient"),
             "smtp_host": setting("smtp_host", "smtp.163.com"), "smtp_port": setting("smtp_port", "465"),
@@ -83,8 +90,10 @@ def add_custom_site(name: str = Form(...), url: str = Form(...)):
         safe_url = validate_public_url(url)
         profile = profile_site(safe_url)
         with connect() as db:
-            db.execute("""INSERT INTO custom_sites(name,url,engine,status,list_selector,profile_note,created_at)
-                VALUES(?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET name=excluded.name,engine=excluded.engine,status=excluded.status,list_selector=excluded.list_selector,profile_note=excluded.profile_note""", (name.strip() or safe_url, profile["url"], profile["engine"], profile["status"], profile["selector"], profile["note"], now_text()))
+            enabled = 1 if profile["status"] == "已适配（静态列表）" else 0
+            db.execute("""INSERT INTO custom_sites(name,url,enabled,engine,status,list_selector,profile_note,created_at)
+                VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET name=excluded.name,enabled=excluded.enabled,engine=excluded.engine,status=excluded.status,list_selector=excluded.list_selector,profile_note=excluded.profile_note""", (name.strip() or safe_url, profile["url"], enabled, profile["engine"], profile["status"], profile["selector"], profile["note"], now_text()))
+        set_setting("custom_site_message", f"{name.strip() or safe_url}：{profile['status']}。请查看下方下一步指引。")
     except ValueError as exc:
         set_setting("custom_site_message", str(exc))
     except Exception as exc:
@@ -95,7 +104,13 @@ def add_custom_site(name: str = Form(...), url: str = Form(...)):
 @app.post("/custom-sites/{site_id}/toggle")
 def toggle_custom_site(site_id: int):
     with connect() as db:
-        db.execute("UPDATE custom_sites SET enabled=1-enabled WHERE id=?", (site_id,))
+        site = db.execute("SELECT name,status FROM custom_sites WHERE id=?", (site_id,)).fetchone()
+        if not site:
+            set_setting("custom_site_message", "未找到该站点")
+        elif site["status"] != "已适配（静态列表）":
+            set_setting("custom_site_message", f"{site['name']} 尚未完成自动适配，暂不能启用。请按“下一步指引”完成后重新识别。")
+        else:
+            db.execute("UPDATE custom_sites SET enabled=1-enabled WHERE id=?", (site_id,))
     return RedirectResponse("/", 303)
 
 
@@ -109,10 +124,23 @@ def reprofile_custom_site(site_id: int):
     try:
         profile = profile_site(site["url"])
         with connect() as db:
-            db.execute("UPDATE custom_sites SET engine=?,status=?,list_selector=?,profile_note=? WHERE id=?", (profile["engine"], profile["status"], profile["selector"], profile["note"], site_id))
+            enabled = 1 if profile["status"] == "已适配（静态列表）" else 0
+            db.execute("UPDATE custom_sites SET enabled=?,engine=?,status=?,list_selector=?,profile_note=? WHERE id=?", (enabled, profile["engine"], profile["status"], profile["selector"], profile["note"], site_id))
         set_setting("custom_site_message", f"{site['name']}：自动适配已更新")
     except Exception as exc:
         set_setting("custom_site_message", f"自动适配失败：{type(exc).__name__}")
+    return RedirectResponse("/", 303)
+
+
+@app.post("/custom-sites/{site_id}/delete")
+def delete_custom_site(site_id: int):
+    with connect() as db:
+        site = db.execute("SELECT name FROM custom_sites WHERE id=?", (site_id,)).fetchone()
+        if site:
+            db.execute("DELETE FROM custom_sites WHERE id=?", (site_id,))
+            set_setting("custom_site_message", f"已删除自定义站点：{site['name']}")
+        else:
+            set_setting("custom_site_message", "未找到该站点")
     return RedirectResponse("/", 303)
 
 
