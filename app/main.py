@@ -88,6 +88,12 @@ def home(request: Request):
     return templates.TemplateResponse(request, "index.html", dashboard_context())
 
 
+@app.get("/_internal/auth-check", status_code=204)
+def auth_check():
+    """Nginx auth_request target for the embedded manual-verification page."""
+    return None
+
+
 @app.post("/sites/{code}/toggle")
 def toggle_site(code: str):
     with connect() as db:
