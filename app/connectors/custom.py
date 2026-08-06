@@ -113,13 +113,14 @@ async def profile_site_from_manual_browser(url: str) -> dict[str, str] | None:
         links = await page.locator("a[href]").evaluate_all(
             """items => items.slice(0, 250).map(item => ({
                 title: (item.innerText || item.textContent || '').replace(/\\s+/g, ' ').trim(),
-                href: item.href || ''
+                href: item.href || '',
+                context: ((item.closest('tr, li, article, .item, .list-item, .notice-item, .news-item') || item.parentElement || item).innerText || '').replace(/\\s+/g, ' ').trim()
             }))"""
         )
 
     usable = [item for item in links if len(item["title"]) >= 8 and item["href"].startswith(("http://", "https://"))]
-    dated = sum(1 for item in usable if DATE.search(item["title"]))
-    if len(usable) >= 3 and (dated >= 1 or len(usable) >= 10):
+    dated = sum(1 for item in usable if DATE.search(item["context"]))
+    if len(usable) >= 3:
         note = f"已从人工验证后的可视 Chrome 读取到 {len(usable)} 条候选链接，其中 {dated} 条标题含日期；后续采集会复用该浏览器会话。"
         return {"url": safe_url, "engine": "可视 Chrome（人工验证）", "status": "已适配（动态浏览器）", "selector": "a", "note": note}
     return {"url": safe_url, "engine": "可视 Chrome（人工验证）", "status": "待人工确认", "selector": "a", "note": "已连接到可视 Chrome，但当前页面尚未识别出足够的公告链接。请确认已进入公告列表并完成网站允许的操作后，再点击“完成验证并自动适配”。"}
@@ -145,7 +146,8 @@ async def _collect_dynamic_site(site: dict, target_date: str, keywords: list[str
         entries = await page.locator("a[href]").evaluate_all(
             """items => items.slice(0, 350).map(item => ({
                 title: (item.innerText || item.textContent || '').replace(/\\s+/g, ' ').trim(),
-                href: item.href || ''
+                href: item.href || '',
+                context: ((item.closest('tr, li, article, .item, .list-item, .notice-item, .news-item') || item.parentElement || item).innerText || '').replace(/\\s+/g, ' ').trim()
             }))"""
         )
     found, visited = [], set()
@@ -154,7 +156,7 @@ async def _collect_dynamic_site(site: dict, target_date: str, keywords: list[str
         if len(title) < 8 or not href.startswith(("http://", "https://")) or href in visited:
             continue
         visited.add(href)
-        date_match = DATE.search(title)
+        date_match = DATE.search(item["context"])
         if not date_match or _normalize_date(date_match.group(0)) != target_date:
             continue
         terms = [word for word in keywords if word.casefold() in title.casefold()]
