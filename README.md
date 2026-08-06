@@ -11,7 +11,7 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-打开 `http://服务器IP:8000`。首次使用请在“系统设置”中设定管理员密码和 SMTP 参数。默认示例密码仅供本地启动，部署前必须修改。
+打开 `http://服务器IP:8000`，使用 `.env` 中的管理员账户 `admin` 和 `ADMIN_PASSWORD` 登录。部署前必须替换示例密码；SMTP 参数也仅保存在 `.env`。
 
 ## 已适配站点
 

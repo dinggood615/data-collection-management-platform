@@ -1,11 +1,13 @@
 from __future__ import annotations
 
+import base64
 import os
+import secrets
 from datetime import date, timedelta
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import RedirectResponse
+from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -15,6 +17,23 @@ app = FastAPI(title="招标采集管理平台")
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 scheduler = BackgroundScheduler(timezone="Asia/Shanghai")
+
+
+@app.middleware("http")
+async def require_admin(request: Request, call_next):
+    """Keep the dashboard private even when Docker publishes port 8000."""
+    if request.url.path.startswith("/static/"):
+        return await call_next(request)
+    configured = os.getenv("ADMIN_PASSWORD", "")
+    auth = request.headers.get("authorization", "")
+    try:
+        scheme, token = auth.split(" ", 1)
+        username, password = base64.b64decode(token).decode().split(":", 1)
+    except Exception:
+        scheme, username, password = "", "", ""
+    if not configured or scheme.lower() != "basic" or username != "admin" or not secrets.compare_digest(password, configured):
+        return PlainTextResponse("需要管理员登录", status_code=401, headers={"WWW-Authenticate": "Basic realm=招标采集管理平台"})
+    return await call_next(request)
 
 
 def dashboard_context() -> dict:
