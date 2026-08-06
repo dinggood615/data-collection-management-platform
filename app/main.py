@@ -49,7 +49,8 @@ def dashboard_context() -> dict:
             "schedule": setting("schedule", "08:00"), "recipient": setting("recipient"),
             "smtp_host": setting("smtp_host", "smtp.163.com"), "smtp_port": setting("smtp_port", "465"),
             "smtp_user": setting("smtp_user"), "smtp_from": setting("smtp_from"),
-            "smtp_configured": bool(setting("smtp_auth_code", secret=True)), "admin_username": setting("admin_username", "admin")}
+            "smtp_configured": bool(setting("smtp_auth_code", secret=True)), "admin_username": setting("admin_username", "admin"),
+            "custom_site_message": setting("custom_site_message")}
 
 
 @app.on_event("startup")
@@ -95,6 +96,23 @@ def add_custom_site(name: str = Form(...), url: str = Form(...)):
 def toggle_custom_site(site_id: int):
     with connect() as db:
         db.execute("UPDATE custom_sites SET enabled=1-enabled WHERE id=?", (site_id,))
+    return RedirectResponse("/", 303)
+
+
+@app.post("/custom-sites/{site_id}/profile")
+def reprofile_custom_site(site_id: int):
+    with connect() as db:
+        site = db.execute("SELECT * FROM custom_sites WHERE id=?", (site_id,)).fetchone()
+    if not site:
+        set_setting("custom_site_message", "未找到该站点")
+        return RedirectResponse("/", 303)
+    try:
+        profile = profile_site(site["url"])
+        with connect() as db:
+            db.execute("UPDATE custom_sites SET engine=?,status=?,list_selector=?,profile_note=? WHERE id=?", (profile["engine"], profile["status"], profile["selector"], profile["note"], site_id))
+        set_setting("custom_site_message", f"{site['name']}：自动适配已更新")
+    except Exception as exc:
+        set_setting("custom_site_message", f"自动适配失败：{type(exc).__name__}")
     return RedirectResponse("/", 303)
 
 
