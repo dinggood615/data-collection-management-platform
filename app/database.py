@@ -2,8 +2,12 @@ from __future__ import annotations
 
 import os
 import sqlite3
+import base64
+import hashlib
 from contextlib import contextmanager
 from datetime import datetime
+
+from cryptography.fernet import Fernet, InvalidToken
 
 
 DEFAULT_SITES = (
@@ -58,17 +62,37 @@ def init_db() -> None:
             db.execute("INSERT OR IGNORE INTO sites(code,name,category,engine) VALUES(?,?,?,?)", site)
         for word in DEFAULT_KEYWORDS.split(","):
             db.execute("INSERT OR IGNORE INTO keywords(term) VALUES(?)", (word,))
-        for key, value in (("schedule", "08:00"), ("recipient", os.getenv("SMTP_TO", ""))):
+        defaults = (
+            ("schedule", "08:00"), ("recipient", os.getenv("SMTP_TO", "")),
+            ("smtp_host", os.getenv("SMTP_HOST", "smtp.163.com")),
+            ("smtp_port", os.getenv("SMTP_PORT", "465")),
+            ("smtp_user", os.getenv("SMTP_USER", "")),
+            ("smtp_from", os.getenv("SMTP_FROM", "")),
+        )
+        for key, value in defaults:
             db.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (key, value))
 
 
-def setting(key: str, default: str = "") -> str:
+def _cipher() -> Fernet:
+    secret = os.getenv("APP_SECRET", "development-secret-change-me").encode("utf-8")
+    return Fernet(base64.urlsafe_b64encode(hashlib.sha256(secret).digest()))
+
+
+def setting(key: str, default: str = "", secret: bool = False) -> str:
     with connect() as db:
         row = db.execute("SELECT value FROM settings WHERE key=?", (key,)).fetchone()
-    return row["value"] if row else default
+    value = row["value"] if row else default
+    if secret and value.startswith("enc:"):
+        try:
+            return _cipher().decrypt(value[4:].encode("utf-8")).decode("utf-8")
+        except InvalidToken:
+            return ""
+    return value
 
 
-def set_setting(key: str, value: str) -> None:
+def set_setting(key: str, value: str, secret: bool = False) -> None:
+    if secret:
+        value = "enc:" + _cipher().encrypt(value.encode("utf-8")).decode("utf-8")
     with connect() as db:
         db.execute("INSERT INTO settings(key,value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value", (key, value))
 
