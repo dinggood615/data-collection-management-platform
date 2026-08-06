@@ -15,6 +15,11 @@ DEFAULT_SITES = (
     ("szecp_purchase", "华润守正采购公告", "服务", "动态浏览器（已验证 Chrome）"),
     ("zjenergy", "浙江能源招标项目公告", "全部", "普通 Fetcher"),
 )
+BUILTIN_CUSTOM_SITES = (
+    ("szecp_tender", "华润守正招标公告", "https://www.szecp.com.cn/first_zbgg/index.html", "动态浏览器（已验证 Chrome）"),
+    ("szecp_purchase", "华润守正采购公告", "https://www.szecp.com.cn/first_cggg/index.html", "动态浏览器（已验证 Chrome）"),
+    ("zjenergy", "浙江能源招标项目公告", "https://zsrm.zjenergy.com.cn/zjnycms/category/iframe.html?dates=3&categoryId=2&tenderMethod=01&page=1", "专用 Fetcher"),
+)
 DEFAULT_KEYWORDS = "软件开发,人力外包,信息化,数字化,劳务外包,人员技术服务,外包服务,系统开发,项目实施,协作开发,编码开发,数据处理,数据治理,信息系统建设,信息系统运维,管理系统,智能管控,智慧运营,网络安全,数字孪生,数字化平台,数字化系统,数智化,AIoT,云平台"
 
 
@@ -68,9 +73,14 @@ def init_db() -> None:
             list_selector TEXT NOT NULL DEFAULT 'a',
             date_pattern TEXT NOT NULL DEFAULT '',
             profile_note TEXT NOT NULL DEFAULT '',
+            builtin_code TEXT,
             created_at TEXT NOT NULL
         );
         """)
+        columns = {row["name"] for row in db.execute("PRAGMA table_info(custom_sites)")}
+        if "builtin_code" not in columns:
+            db.execute("ALTER TABLE custom_sites ADD COLUMN builtin_code TEXT")
+        db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_custom_sites_builtin_code ON custom_sites(builtin_code) WHERE builtin_code IS NOT NULL")
         for site in DEFAULT_SITES:
             db.execute("INSERT OR IGNORE INTO sites(code,name,category,engine) VALUES(?,?,?,?)", site)
         for word in DEFAULT_KEYWORDS.split(","):
@@ -85,6 +95,15 @@ def init_db() -> None:
         )
         for key, value in defaults:
             db.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (key, value))
+        migrated = db.execute("SELECT value FROM settings WHERE key='builtin_custom_sites_migrated'").fetchone()
+        if not migrated:
+            enabled_by_code = {row["code"]: row["enabled"] for row in db.execute("SELECT code,enabled FROM sites")}
+            for code, name, url, engine in BUILTIN_CUSTOM_SITES:
+                db.execute("""INSERT OR IGNORE INTO custom_sites
+                    (name,url,enabled,engine,status,list_selector,profile_note,builtin_code,created_at)
+                    VALUES(?,?,?,?,?,?,?,?,?)""", (name, url, enabled_by_code.get(code, 1), engine,
+                        "已适配（专用采集器）", "a", "平台内置的专用采集规则。可打开此站进行人工查看；删除仅从平台管理列表移除。", code, now_text()))
+            db.execute("INSERT INTO settings(key,value) VALUES('builtin_custom_sites_migrated','1')")
 
 
 def _cipher() -> Fernet:

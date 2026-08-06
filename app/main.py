@@ -22,7 +22,7 @@ templates = Jinja2Templates(directory="app/templates")
 scheduler = BackgroundScheduler(timezone="Asia/Shanghai")
 SESSION_COOKIE = "tender_session"
 SESSION_TTL_SECONDS = 8 * 60 * 60
-COLLECTABLE_CUSTOM_STATUSES = {"已适配（静态列表）", "已适配（动态浏览器）"}
+COLLECTABLE_CUSTOM_STATUSES = {"已适配（静态列表）", "已适配（动态浏览器）", "已适配（专用采集器）"}
 
 
 def session_serializer() -> URLSafeTimedSerializer:
@@ -148,9 +148,11 @@ def update_custom_site(site_id: int, name: str = Form(...), url: str = Form(...)
         profile = profile_site(safe_url)
         enabled = 1 if profile["status"] in COLLECTABLE_CUSTOM_STATUSES else 0
         with connect() as db:
-            exists = db.execute("SELECT id FROM custom_sites WHERE id=?", (site_id,)).fetchone()
+            exists = db.execute("SELECT id,builtin_code FROM custom_sites WHERE id=?", (site_id,)).fetchone()
             if not exists:
                 raise ValueError("未找到该站点")
+            if exists["builtin_code"]:
+                raise ValueError("内置站点的地址由专用采集规则管理；可使用下方操作进行验证、重新识别、启用或删除。")
             db.execute("UPDATE custom_sites SET name=?,url=?,enabled=?,engine=?,status=?,list_selector=?,profile_note=? WHERE id=?", (safe_name, profile["url"], enabled, profile["engine"], profile["status"], profile["selector"], profile["note"], site_id))
         set_setting("custom_site_message", f"{safe_name}：已保存并完成自动识别。")
     except ValueError as exc:
@@ -184,6 +186,11 @@ def reprofile_custom_site(site_id: int):
         set_setting("custom_site_message", "未找到该站点")
         return RedirectResponse("/", 303)
     try:
+        if site["builtin_code"]:
+            with connect() as db:
+                db.execute("UPDATE custom_sites SET profile_note=? WHERE id=?", ("已检查并保留平台内置的专用采集规则；如网站需要人工操作，请先点击“打开此站验证”。", site_id))
+            set_setting("custom_site_message", f"{site['name']}：已保留专用采集规则。")
+            return RedirectResponse("/", 303)
         # Prefer the page the user has just verified in visible Chrome.  Static
         # profiling remains a safe fallback when no matching browser tab exists.
         profile = asyncio.run(profile_site_from_manual_browser(site["url"]))
