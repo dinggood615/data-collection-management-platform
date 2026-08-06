@@ -11,10 +11,18 @@ cp .env.example .env
 docker compose up -d --build
 ```
 
-已发布到 GitHub 后，也可在 Ubuntu VPS 执行：
+已发布到 GitHub 后，可选择下列任一安装方式：
+
+### Docker（推荐）
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/<你的账号>/tender-collection-platform/main/install.sh | sudo bash -s -- https://github.com/<你的账号>/tender-collection-platform.git
+curl -fsSL https://raw.githubusercontent.com/<你的账号>/tender-collection-platform/main/install-docker.sh | sudo bash -s -- https://github.com/<你的账号>/tender-collection-platform.git
+```
+
+### 原生 Linux / systemd
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/<你的账号>/tender-collection-platform/main/install-linux.sh | sudo bash -s -- https://github.com/<你的账号>/tender-collection-platform.git
 ```
 
 打开 `http://服务器IP:8000`，使用 `.env` 中的管理员账户 `admin` 和 `ADMIN_PASSWORD` 登录。部署前必须替换示例密码；SMTP 参数也仅保存在 `.env`。
