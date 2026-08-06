@@ -14,7 +14,7 @@ from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 from .database import connect, init_db, now_text, set_setting, setting
-from .connectors.custom import profile_site, validate_public_url, validate_site_name
+from .connectors.custom import profile_site, profile_site_from_manual_browser, validate_public_url, validate_site_name
 
 app = FastAPI(title="招标采集管理平台")
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -22,6 +22,7 @@ templates = Jinja2Templates(directory="app/templates")
 scheduler = BackgroundScheduler(timezone="Asia/Shanghai")
 SESSION_COOKIE = "tender_session"
 SESSION_TTL_SECONDS = 8 * 60 * 60
+COLLECTABLE_CUSTOM_STATUSES = {"已适配（静态列表）", "已适配（动态浏览器）"}
 
 
 def session_serializer() -> URLSafeTimedSerializer:
@@ -77,10 +78,10 @@ def dashboard_context() -> dict:
             site["profile_note"] = "该记录的名称或网址格式不完整，尚未发起采集。请直接在下方修正后保存。"
         if site["entry_invalid"]:
             site["next_step"] = "直接修改网站名称和公告列表网址，然后点击“保存并识别”。无需人工验证。"
-        elif site["status"] == "已适配（静态列表）":
+        elif site["status"] in COLLECTABLE_CUSTOM_STATUSES:
             site["next_step"] = "已可自动采集。确认启用后，点击“立即采集”可先进行一次人工检查。"
         elif "JavaScript" in site["profile_note"] or "会话" in site["profile_note"]:
-            site["next_step"] = "1. 通过 SSH 隧道打开可视 Chrome；2. 自行完成网站允许的登录/验证；3. 回到这里点击“重新识别”。"
+            site["next_step"] = "点击“打开此站验证”，在可视 Chrome 中完成网站允许的登录或验证后，回到这里点击“完成验证并自动适配”。"
         else:
             site["next_step"] = "请确认填写的是公告列表页而非首页、详情页或搜索页；确认公开可访问后点击“重新识别”。"
     return {"sites": sites, "keywords": keywords, "runs": runs, "results": results, "custom_sites": custom_sites,
@@ -128,7 +129,7 @@ def add_custom_site(name: str = Form(...), url: str = Form(...)):
         safe_url = validate_public_url(url)
         profile = profile_site(safe_url)
         with connect() as db:
-            enabled = 1 if profile["status"] == "已适配（静态列表）" else 0
+            enabled = 1 if profile["status"] in COLLECTABLE_CUSTOM_STATUSES else 0
             db.execute("""INSERT INTO custom_sites(name,url,enabled,engine,status,list_selector,profile_note,created_at)
                 VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET name=excluded.name,enabled=excluded.enabled,engine=excluded.engine,status=excluded.status,list_selector=excluded.list_selector,profile_note=excluded.profile_note""", (safe_name, profile["url"], enabled, profile["engine"], profile["status"], profile["selector"], profile["note"], now_text()))
         set_setting("custom_site_message", f"{safe_name}：{profile['status']}。请查看下方下一步指引。")
@@ -145,7 +146,7 @@ def update_custom_site(site_id: int, name: str = Form(...), url: str = Form(...)
         safe_name = validate_site_name(name)
         safe_url = validate_public_url(url)
         profile = profile_site(safe_url)
-        enabled = 1 if profile["status"] == "已适配（静态列表）" else 0
+        enabled = 1 if profile["status"] in COLLECTABLE_CUSTOM_STATUSES else 0
         with connect() as db:
             exists = db.execute("SELECT id FROM custom_sites WHERE id=?", (site_id,)).fetchone()
             if not exists:
@@ -166,7 +167,7 @@ def toggle_custom_site(site_id: int):
         site = db.execute("SELECT name,status FROM custom_sites WHERE id=?", (site_id,)).fetchone()
         if not site:
             message = "未找到该站点"
-        elif site["status"] != "已适配（静态列表）":
+        elif site["status"] not in COLLECTABLE_CUSTOM_STATUSES:
             message = f"{site['name']} 尚未完成自动适配，暂不能启用。请按“下一步指引”完成后重新识别。"
         else:
             db.execute("UPDATE custom_sites SET enabled=1-enabled WHERE id=?", (site_id,))
@@ -183,11 +184,18 @@ def reprofile_custom_site(site_id: int):
         set_setting("custom_site_message", "未找到该站点")
         return RedirectResponse("/", 303)
     try:
-        profile = profile_site(site["url"])
+        # Prefer the page the user has just verified in visible Chrome.  Static
+        # profiling remains a safe fallback when no matching browser tab exists.
+        profile = asyncio.run(profile_site_from_manual_browser(site["url"]))
+        if profile is None:
+            profile = profile_site(site["url"])
         with connect() as db:
-            enabled = 1 if profile["status"] == "已适配（静态列表）" else 0
+            enabled = 1 if profile["status"] in COLLECTABLE_CUSTOM_STATUSES else 0
             db.execute("UPDATE custom_sites SET enabled=?,engine=?,status=?,list_selector=?,profile_note=? WHERE id=?", (enabled, profile["engine"], profile["status"], profile["selector"], profile["note"], site_id))
-        set_setting("custom_site_message", f"{site['name']}：自动适配已更新")
+        if profile["status"] == "已适配（动态浏览器）":
+            set_setting("custom_site_message", f"{site['name']}：已根据人工验证后的 Chrome 页面完成动态适配，并已启用。")
+        else:
+            set_setting("custom_site_message", f"{site['name']}：自动适配已更新")
     except Exception as exc:
         set_setting("custom_site_message", f"自动适配失败：{type(exc).__name__}")
     return RedirectResponse("/", 303)
@@ -215,7 +223,7 @@ def open_site_for_manual_verification(site_id: int):
     try:
         target_url = validate_public_url(site["url"])
         asyncio.run(_open_manual_browser(target_url))
-        set_setting("custom_site_message", f"{site['name']} 已在可视 Chrome 中打开；请手动完成网站允许的操作后返回重新识别。")
+        set_setting("custom_site_message", f"{site['name']} 已在可视 Chrome 中打开；完成网站允许的操作后，回到平台点击“完成验证并自动适配”。")
         return RedirectResponse("/manual-verify/vnc.html?autoconnect=1&path=manual-verify/websockify", 303)
     except Exception as exc:
         set_setting("custom_site_message", f"无法打开可视 Chrome：{type(exc).__name__}")

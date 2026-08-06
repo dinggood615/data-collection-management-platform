@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import asyncio
 import os
 import re
 import socket
@@ -90,11 +91,84 @@ def profile_site(url: str) -> dict[str, str]:
     return {"url": safe_url, "engine": "需要人工确认", "status": "待人工确认", "selector": "a", "note": note}
 
 
+async def profile_site_from_manual_browser(url: str) -> dict[str, str] | None:
+    """Profile the page currently opened in the visible, user-approved Chrome.
+
+    This deliberately reuses the browser profile after the user has completed any
+    permitted login or verification.  It does not solve, bypass, or retry a
+    challenge.  Returning ``None`` means the selected site is not open there.
+    """
+    safe_url = validate_public_url(url)
+    from playwright.async_api import async_playwright
+
+    expected_host = urlparse(safe_url).netloc.lower()
+    cdp_url = os.getenv("CHROME_CDP_URL", "http://127.0.0.1:9222")
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.connect_over_cdp(cdp_url)
+        pages = [page for context in browser.contexts for page in context.pages]
+        page = next((item for item in reversed(pages) if urlparse(item.url).netloc.lower() == expected_host), None)
+        if page is None:
+            return None
+        await page.wait_for_timeout(800)
+        links = await page.locator("a[href]").evaluate_all(
+            """items => items.slice(0, 250).map(item => ({
+                title: (item.innerText || item.textContent || '').replace(/\\s+/g, ' ').trim(),
+                href: item.href || ''
+            }))"""
+        )
+
+    usable = [item for item in links if len(item["title"]) >= 8 and item["href"].startswith(("http://", "https://"))]
+    dated = sum(1 for item in usable if DATE.search(item["title"]))
+    if len(usable) >= 3 and (dated >= 1 or len(usable) >= 10):
+        note = f"已从人工验证后的可视 Chrome 读取到 {len(usable)} 条候选链接，其中 {dated} 条标题含日期；后续采集会复用该浏览器会话。"
+        return {"url": safe_url, "engine": "可视 Chrome（人工验证）", "status": "已适配（动态浏览器）", "selector": "a", "note": note}
+    return {"url": safe_url, "engine": "可视 Chrome（人工验证）", "status": "待人工确认", "selector": "a", "note": "已连接到可视 Chrome，但当前页面尚未识别出足够的公告链接。请确认已进入公告列表并完成网站允许的操作后，再点击“完成验证并自动适配”。"}
+
+
 def _normalize_date(value: str) -> str:
     return value.replace("年", "-").replace("月", "-").replace("日", "").replace("/", "-").replace(".", "-")
 
 
+async def _collect_dynamic_site(site: dict, target_date: str, keywords: list[str]) -> tuple[list[dict], str]:
+    """Read public list entries through the persistent, user-verified browser."""
+    from playwright.async_api import async_playwright
+
+    expected_host = urlparse(site["url"]).netloc.lower()
+    cdp_url = os.getenv("CHROME_CDP_URL", "http://127.0.0.1:9222")
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.connect_over_cdp(cdp_url)
+        pages = [page for context in browser.contexts for page in context.pages]
+        page = next((item for item in reversed(pages) if urlparse(item.url).netloc.lower() == expected_host), None)
+        if page is None:
+            return [], f"{site['name']}：请先点击“打开此站验证”，在可视 Chrome 中打开该站点后再采集"
+        await page.wait_for_timeout(800)
+        entries = await page.locator("a[href]").evaluate_all(
+            """items => items.slice(0, 350).map(item => ({
+                title: (item.innerText || item.textContent || '').replace(/\\s+/g, ' ').trim(),
+                href: item.href || ''
+            }))"""
+        )
+    found, visited = [], set()
+    for item in entries:
+        title, href = item["title"], item["href"]
+        if len(title) < 8 or not href.startswith(("http://", "https://")) or href in visited:
+            continue
+        visited.add(href)
+        date_match = DATE.search(title)
+        if not date_match or _normalize_date(date_match.group(0)) != target_date:
+            continue
+        terms = [word for word in keywords if word.casefold() in title.casefold()]
+        if terms:
+            found.append({"source": site["name"], "title": title, "url": href, "published_date": target_date, "notice_type": "人工验证后动态采集", "matched_terms": terms})
+    return found, ""
+
+
 def collect_custom_site(site: dict, target_date: str, keywords: list[str]) -> tuple[list[dict], str]:
+    if site["status"] == "已适配（动态浏览器）":
+        try:
+            return asyncio.run(_collect_dynamic_site(site, target_date, keywords))
+        except Exception as exc:
+            return [], f"{site['name']}：动态浏览器采集失败：{type(exc).__name__}"
     if site["status"] != "已适配（静态列表）":
         return [], f"{site['name']}：等待人工确认适配规则"
     try:
