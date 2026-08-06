@@ -31,9 +31,17 @@ install_packages() {
   fi
 }
 
+git_repo() {
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    git -c http.extraHeader="Authorization: Bearer ${GITHUB_TOKEN}" "$@"
+  else
+    git "$@"
+  fi
+}
+
 install_packages
 id "$SERVICE_USER" >/dev/null 2>&1 || useradd --system --create-home --shell /usr/sbin/nologin "$SERVICE_USER"
-if [ -d "$INSTALL_DIR/.git" ]; then git -C "$INSTALL_DIR" pull --ff-only; else git clone "$REPOSITORY_URL" "$INSTALL_DIR"; fi
+if [ -d "$INSTALL_DIR/.git" ]; then git_repo -C "$INSTALL_DIR" pull --ff-only; else git_repo clone "$REPOSITORY_URL" "$INSTALL_DIR"; fi
 python3 -m venv "$INSTALL_DIR/.venv"
 "$INSTALL_DIR/.venv/bin/pip" install --upgrade pip wheel
 "$INSTALL_DIR/.venv/bin/pip" install -r "$INSTALL_DIR/requirements.txt"
