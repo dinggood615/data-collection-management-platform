@@ -22,10 +22,10 @@
 curl -fsSL https://raw.githubusercontent.com/dinggood615/tender-collection-platform/main/install-linux.sh | sudo bash -s -- https://github.com/dinggood615/tender-collection-platform.git
 ```
 
-默认仅监听 `127.0.0.1:8000`；生产环境应通过 Nginx 或 Caddy 提供 HTTPS 和公网访问。可用环境变量改端口：
+脚本会自动安装 Nginx、生成本机 TLS 证书，并在 HTTPS `5555` 端口提供后台与人工验证入口；应用、VNC、noVNC 与 Chrome 调试端口只监听本机。可用环境变量改公网端口：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dinggood615/tender-collection-platform/main/install-linux.sh | sudo PORT=5555 bash -s -- https://github.com/dinggood615/tender-collection-platform.git
+curl -fsSL https://raw.githubusercontent.com/dinggood615/tender-collection-platform/main/install-linux.sh | sudo PORT=8443 bash -s -- https://github.com/dinggood615/tender-collection-platform.git
 ```
 
 首次登录账户为 `admin / admin`，请立即在页面顶部修改为强密码。
@@ -40,7 +40,7 @@ curl -fsSL https://raw.githubusercontent.com/dinggood615/tender-collection-platf
 
 ## 可视 Chrome 人工验证
 
-原生脚本会尽量安装 Chrome/Chromium、Xvfb 与 noVNC。验证入口只监听服务器本机，建议通过 SSH 隧道访问：
+原生脚本会安装 Chrome/Chromium、Xvfb、noVNC、Nginx 和安全代理。无需 SSH 隧道：在自定义站点卡片点击“打开此站验证”，平台会先把可视 Chrome 导航到该站点，再打开验证窗口。
 
 ```bash
 ssh -L 6080:127.0.0.1:6080 <用户>@<服务器IP>
