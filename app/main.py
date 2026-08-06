@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import base64
+import asyncio
 import os
 import secrets
 from datetime import date, timedelta
@@ -190,6 +191,35 @@ def reprofile_custom_site(site_id: int):
     except Exception as exc:
         set_setting("custom_site_message", f"自动适配失败：{type(exc).__name__}")
     return RedirectResponse("/", 303)
+
+
+async def _open_manual_browser(url: str) -> None:
+    """Navigate the already-visible, user-controlled Chrome to a chosen site."""
+    from playwright.async_api import async_playwright
+
+    cdp_url = os.getenv("CHROME_CDP_URL", "http://127.0.0.1:9222")
+    async with async_playwright() as playwright:
+        browser = await playwright.chromium.connect_over_cdp(cdp_url)
+        context = browser.contexts[0] if browser.contexts else await browser.new_context()
+        page = context.pages[0] if context.pages else await context.new_page()
+        await page.goto(url, wait_until="domcontentloaded", timeout=45000)
+
+
+@app.post("/custom-sites/{site_id}/manual-verify")
+def open_site_for_manual_verification(site_id: int):
+    with connect() as db:
+        site = db.execute("SELECT name,url FROM custom_sites WHERE id=?", (site_id,)).fetchone()
+    if not site:
+        set_setting("custom_site_message", "未找到该站点")
+        return RedirectResponse("/", 303)
+    try:
+        target_url = validate_public_url(site["url"])
+        asyncio.run(_open_manual_browser(target_url))
+        set_setting("custom_site_message", f"{site['name']} 已在可视 Chrome 中打开；请手动完成网站允许的操作后返回重新识别。")
+        return RedirectResponse("/manual-verify/vnc.html?autoconnect=1&path=manual-verify/websockify", 303)
+    except Exception as exc:
+        set_setting("custom_site_message", f"无法打开可视 Chrome：{type(exc).__name__}")
+        return RedirectResponse("/", 303)
 
 
 @app.post("/custom-sites/{site_id}/delete")
