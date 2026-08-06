@@ -25,7 +25,7 @@ curl -fsSL https://raw.githubusercontent.com/dinggood615/tender-collection-platf
 curl -fsSL https://raw.githubusercontent.com/dinggood615/tender-collection-platform/main/install-linux.sh | sudo bash -s -- https://github.com/dinggood615/tender-collection-platform.git
 ```
 
-打开 `http://服务器IP:8000`，使用 `.env` 中的管理员账户 `admin` 和 `ADMIN_PASSWORD` 登录。部署前必须替换示例密码；SMTP 参数也仅保存在 `.env`。
+打开 `http://服务器IP:8000`，使用 `.env` 中的管理员账户 `admin` 和 `ADMIN_PASSWORD` 登录。部署前必须替换示例密码。SMTP 主机、端口、发件邮箱、授权码和收件人均可在后台“邮件与定时”中填写；授权码使用 `APP_SECRET` 派生的密钥加密后保存，页面不会回显。
 
 ## 已适配站点
 
@@ -38,7 +38,7 @@ curl -fsSL https://raw.githubusercontent.com/dinggood615/tender-collection-platf
 ## 数据与安全
 
 - SQLite 数据保存在 Docker volume `platform_data`。
-- SMTP 授权码只能写入 `.env` 或后台受保护设置，绝不提交到 Git。
+- SMTP 授权码可在后台填写并加密保存，也可由 `.env` 提供；绝不提交到 Git。
 - 建议用 Nginx/Caddy 配置 HTTPS，并限制管理后台仅允许可信 IP 或 VPN 访问。
 - 定时采集默认每天北京时间 08:00，采集前一天数据并按标题去重。
 

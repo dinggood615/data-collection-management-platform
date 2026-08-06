@@ -43,7 +43,10 @@ def dashboard_context() -> dict:
         runs = db.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 8").fetchall()
         results = db.execute("SELECT * FROM tenders ORDER BY first_seen_at DESC LIMIT 20").fetchall()
     return {"sites": sites, "keywords": keywords, "runs": runs, "results": results,
-            "schedule": setting("schedule", "08:00"), "recipient": setting("recipient")}
+            "schedule": setting("schedule", "08:00"), "recipient": setting("recipient"),
+            "smtp_host": setting("smtp_host", "smtp.163.com"), "smtp_port": setting("smtp_port", "465"),
+            "smtp_user": setting("smtp_user"), "smtp_from": setting("smtp_from"),
+            "smtp_configured": bool(setting("smtp_auth_code", secret=True))}
 
 
 @app.on_event("startup")
@@ -87,9 +90,15 @@ def toggle_keyword(term: str):
 
 
 @app.post("/settings")
-def save_settings(schedule: str = Form(...), recipient: str = Form(...)):
+def save_settings(schedule: str = Form(...), recipient: str = Form(...), smtp_host: str = Form(...), smtp_port: str = Form(...), smtp_user: str = Form(...), smtp_from: str = Form(...), smtp_auth_code: str = Form("")):
     set_setting("schedule", schedule)
     set_setting("recipient", recipient.strip())
+    set_setting("smtp_host", smtp_host.strip())
+    set_setting("smtp_port", smtp_port.strip())
+    set_setting("smtp_user", smtp_user.strip())
+    set_setting("smtp_from", smtp_from.strip())
+    if smtp_auth_code.strip():
+        set_setting("smtp_auth_code", smtp_auth_code.strip(), secret=True)
     reschedule()
     return RedirectResponse("/", 303)
 

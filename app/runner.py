@@ -36,15 +36,16 @@ def collect_enabled_sites(target_date: str) -> tuple[int, int, str]:
             if cursor.rowcount:
                 new_items.append(item)
     recipient = setting("recipient")
-    if recipient and os.getenv("SMTP_USER") and os.getenv("SMTP_AUTH_CODE"):
-        send_report(recipient, target_date, len(items), new_items, notices)
+    smtp = {"host": setting("smtp_host", os.getenv("SMTP_HOST", "smtp.163.com")), "port": setting("smtp_port", os.getenv("SMTP_PORT", "465")), "user": setting("smtp_user", os.getenv("SMTP_USER", "")), "from": setting("smtp_from", os.getenv("SMTP_FROM", "")), "auth_code": setting("smtp_auth_code", os.getenv("SMTP_AUTH_CODE", ""), secret=True)}
+    if recipient and smtp["user"] and smtp["auth_code"]:
+        send_report(recipient, target_date, len(items), new_items, notices, smtp)
     return len(items), len(new_items), "; ".join(notices) or "采集完成"
 
 
-def send_report(recipient: str, target_date: str, matched: int, new_items: list[dict], notices: list[str]) -> None:
+def send_report(recipient: str, target_date: str, matched: int, new_items: list[dict], notices: list[str], smtp_config: dict[str, str]) -> None:
     msg = EmailMessage()
     msg["Subject"] = f"招标采集日报 {target_date}（新增 {len(new_items)} 条）"
-    msg["From"] = os.environ.get("SMTP_FROM", os.environ["SMTP_USER"])
+    msg["From"] = smtp_config["from"] or smtp_config["user"]
     msg["To"] = recipient
     lines = [f"目标日期：{target_date}", f"关键词命中：{matched} 条；新增：{len(new_items)} 条"]
     for item in new_items:
@@ -52,6 +53,6 @@ def send_report(recipient: str, target_date: str, matched: int, new_items: list[
     if notices:
         lines.extend(("", "提示：", *notices))
     msg.set_content("\n".join(lines))
-    with smtplib.SMTP_SSL(os.getenv("SMTP_HOST", "smtp.163.com"), int(os.getenv("SMTP_PORT", "465")), context=ssl.create_default_context()) as smtp:
-        smtp.login(os.environ["SMTP_USER"], os.environ["SMTP_AUTH_CODE"])
+    with smtplib.SMTP_SSL(smtp_config["host"], int(smtp_config["port"]), context=ssl.create_default_context()) as smtp:
+        smtp.login(smtp_config["user"], smtp_config["auth_code"])
         smtp.send_message(msg)
