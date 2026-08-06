@@ -22,6 +22,9 @@ Fetcher.configure(
 def validate_public_url(url: str) -> str:
     """Permit only public HTTP(S) destinations; prevents SSRF from the dashboard."""
     parsed = urlparse(url.strip())
+    raw = url.strip()
+    if len(raw) > 2048 or any(char.isspace() for char in raw) or raw.lower().count("http") != 1:
+        raise ValueError("网址格式不正确：请只粘贴一条完整的公告列表网址")
     if parsed.scheme not in {"http", "https"} or not parsed.hostname:
         raise ValueError("仅支持完整的公开 HTTP/HTTPS 地址")
     try:
@@ -32,6 +35,15 @@ def validate_public_url(url: str) -> str:
         if not ipaddress.ip_address(address[4][0]).is_global:
             raise ValueError("不允许内网、回环或保留地址")
     return parsed.geturl()
+
+
+def validate_site_name(name: str) -> str:
+    value = " ".join(name.split())
+    if not 2 <= len(value) <= 80:
+        raise ValueError("网站名称需为 2 至 80 个字符")
+    if "://" in value or "/" in value:
+        raise ValueError("网站名称不能包含网址或路径，请只填写名称")
+    return value
 
 
 def _text(element) -> str:
