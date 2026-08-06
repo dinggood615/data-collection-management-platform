@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ipaddress
+import os
 import re
 import socket
 from urllib.parse import urljoin, urlparse
@@ -10,9 +11,12 @@ from scrapling.fetchers import Fetcher
 DATE = re.compile(r"20\d{2}(?:[-./年])\d{1,2}(?:[-./月])\d{1,2}(?:日)?")
 DYNAMIC_MARKERS = ("__NEXT_DATA__", "__NUXT__", "webpackJsonp", "vue", "react", "captcha", "验证码")
 
-# Scrapling needs this enabled before a response is created for auto_save and
-# adaptive selection to persist. It is used only for our own learned list CSS.
-Fetcher.adaptive = True
+# Scrapling needs adaptive mode and a writable SQLite store before a response
+# is created. This is only for our learned list CSS, never cookies or passwords.
+Fetcher.configure(
+    adaptive=True,
+    storage_args={"storage_file": os.getenv("SCRAPLING_STORAGE_PATH", "data/scrapling-selectors.sqlite3")},
+)
 
 
 def validate_public_url(url: str) -> str:
