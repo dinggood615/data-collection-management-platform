@@ -135,14 +135,17 @@ def update_custom_site(site_id: int, name: str = Form(...), url: str = Form(...)
 
 @app.post("/custom-sites/{site_id}/toggle")
 def toggle_custom_site(site_id: int):
+    message = ""
     with connect() as db:
         site = db.execute("SELECT name,status FROM custom_sites WHERE id=?", (site_id,)).fetchone()
         if not site:
-            set_setting("custom_site_message", "未找到该站点")
+            message = "未找到该站点"
         elif site["status"] != "已适配（静态列表）":
-            set_setting("custom_site_message", f"{site['name']} 尚未完成自动适配，暂不能启用。请按“下一步指引”完成后重新识别。")
+            message = f"{site['name']} 尚未完成自动适配，暂不能启用。请按“下一步指引”完成后重新识别。"
         else:
             db.execute("UPDATE custom_sites SET enabled=1-enabled WHERE id=?", (site_id,))
+            message = f"{site['name']}：启用状态已更新"
+    set_setting("custom_site_message", message)
     return RedirectResponse("/", 303)
 
 
@@ -166,13 +169,15 @@ def reprofile_custom_site(site_id: int):
 
 @app.post("/custom-sites/{site_id}/delete")
 def delete_custom_site(site_id: int):
+    message = ""
     with connect() as db:
         site = db.execute("SELECT name FROM custom_sites WHERE id=?", (site_id,)).fetchone()
         if site:
             db.execute("DELETE FROM custom_sites WHERE id=?", (site_id,))
-            set_setting("custom_site_message", f"已删除自定义站点：{site['name']}")
+            message = f"已删除自定义站点：{site['name']}"
         else:
-            set_setting("custom_site_message", "未找到该站点")
+            message = "未找到该站点"
+    set_setting("custom_site_message", message)
     return RedirectResponse("/", 303)
 
 
