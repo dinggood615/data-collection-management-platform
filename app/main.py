@@ -32,7 +32,7 @@ async def require_admin(request: Request, call_next):
     except Exception:
         scheme, username, password = "", "", ""
     if not configured or scheme.lower() != "basic" or username != "admin" or not secrets.compare_digest(password, configured):
-        return PlainTextResponse("需要管理员登录", status_code=401, headers={"WWW-Authenticate": "Basic realm=招标采集管理平台"})
+        return PlainTextResponse("需要管理员登录", status_code=401, headers={"WWW-Authenticate": 'Basic realm="Tender Platform"'})
     return await call_next(request)
 
 
