@@ -74,6 +74,7 @@ def init_db() -> None:
         for word in DEFAULT_KEYWORDS.split(","):
             db.execute("INSERT OR IGNORE INTO keywords(term) VALUES(?)", (word,))
         defaults = (
+            ("admin_username", os.getenv("ADMIN_USERNAME", "admin")),
             ("schedule", "08:00"), ("recipient", os.getenv("SMTP_TO", "")),
             ("smtp_host", os.getenv("SMTP_HOST", "smtp.163.com")),
             ("smtp_port", os.getenv("SMTP_PORT", "465")),

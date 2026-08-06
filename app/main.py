@@ -25,14 +25,15 @@ async def require_admin(request: Request, call_next):
     """Keep the dashboard private even when Docker publishes port 8000."""
     if request.url.path.startswith("/static/"):
         return await call_next(request)
-    configured = os.getenv("ADMIN_PASSWORD", "")
+    configured = setting("admin_password", os.getenv("ADMIN_PASSWORD", "admin"), secret=True)
+    username = setting("admin_username", os.getenv("ADMIN_USERNAME", "admin"))
     auth = request.headers.get("authorization", "")
     try:
         scheme, token = auth.split(" ", 1)
-        username, password = base64.b64decode(token).decode().split(":", 1)
+        supplied_username, password = base64.b64decode(token).decode().split(":", 1)
     except Exception:
-        scheme, username, password = "", "", ""
-    if not configured or scheme.lower() != "basic" or username != "admin" or not secrets.compare_digest(password, configured):
+        scheme, supplied_username, password = "", "", ""
+    if not configured or scheme.lower() != "basic" or supplied_username != username or not secrets.compare_digest(password, configured):
         return PlainTextResponse("需要管理员登录", status_code=401, headers={"WWW-Authenticate": 'Basic realm="Tender Platform"'})
     return await call_next(request)
 
@@ -48,7 +49,7 @@ def dashboard_context() -> dict:
             "schedule": setting("schedule", "08:00"), "recipient": setting("recipient"),
             "smtp_host": setting("smtp_host", "smtp.163.com"), "smtp_port": setting("smtp_port", "465"),
             "smtp_user": setting("smtp_user"), "smtp_from": setting("smtp_from"),
-            "smtp_configured": bool(setting("smtp_auth_code", secret=True))}
+            "smtp_configured": bool(setting("smtp_auth_code", secret=True)), "admin_username": setting("admin_username", "admin")}
 
 
 @app.on_event("startup")
@@ -124,6 +125,15 @@ def save_settings(schedule: str = Form(...), recipient: str = Form(...), smtp_ho
     if smtp_auth_code.strip():
         set_setting("smtp_auth_code", smtp_auth_code.strip(), secret=True)
     reschedule()
+    return RedirectResponse("/", 303)
+
+
+@app.post("/admin-credentials")
+def save_admin_credentials(admin_username: str = Form(...), new_password: str = Form(...), confirm_password: str = Form(...)):
+    if len(admin_username.strip()) < 3 or len(new_password) < 8 or new_password != confirm_password:
+        return RedirectResponse("/", 303)
+    set_setting("admin_username", admin_username.strip())
+    set_setting("admin_password", new_password, secret=True)
     return RedirectResponse("/", 303)
 
 
