@@ -61,7 +61,6 @@ async def require_admin(request: Request, call_next):
 
 def dashboard_context() -> dict:
     with connect() as db:
-        sites = db.execute("SELECT * FROM sites ORDER BY name").fetchall()
         keywords = db.execute("SELECT * FROM keywords WHERE enabled=1 ORDER BY term").fetchall()
         runs = db.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 8").fetchall()
         results = db.execute("SELECT * FROM tenders ORDER BY first_seen_at DESC LIMIT 20").fetchall()
@@ -84,7 +83,7 @@ def dashboard_context() -> dict:
             site["next_step"] = "点击“打开此站验证”，在可视 Chrome 中完成网站允许的登录或验证后，回到这里点击“完成验证并自动适配”。"
         else:
             site["next_step"] = "请确认填写的是公告列表页而非首页、详情页或搜索页；确认公开可访问后点击“重新识别”。"
-    return {"sites": sites, "keywords": keywords, "runs": runs, "results": results, "custom_sites": custom_sites,
+    return {"keywords": keywords, "runs": runs, "results": results, "custom_sites": custom_sites,
             "schedule": setting("schedule", "08:00"), "recipient": setting("recipient"),
             "smtp_host": setting("smtp_host", "smtp.163.com"), "smtp_port": setting("smtp_port", "465"),
             "smtp_user": setting("smtp_user"), "smtp_from": setting("smtp_from"),
@@ -113,13 +112,6 @@ def home(request: Request):
 def auth_check():
     """Nginx auth_request target for the embedded manual-verification page."""
     return None
-
-
-@app.post("/sites/{code}/toggle")
-def toggle_site(code: str):
-    with connect() as db:
-        db.execute("UPDATE sites SET enabled=1-enabled WHERE code=?", (code,))
-    return RedirectResponse("/", 303)
 
 
 @app.post("/custom-sites")
