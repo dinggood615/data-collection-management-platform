@@ -131,25 +131,27 @@ def _normalize_date(value: str) -> str:
 
 
 async def _collect_dynamic_site(site: dict, target_date: str, keywords: list[str]) -> tuple[list[dict], str]:
-    """Read public list entries through the persistent, user-verified browser."""
+    """Open one temporary tab in the verified browser and always close it again."""
     from playwright.async_api import async_playwright
 
-    expected_host = urlparse(site["url"]).netloc.lower()
     cdp_url = os.getenv("CHROME_CDP_URL", "http://127.0.0.1:9222")
     async with async_playwright() as playwright:
         browser = await playwright.chromium.connect_over_cdp(cdp_url)
-        pages = [page for context in browser.contexts for page in context.pages]
-        page = next((item for item in reversed(pages) if urlparse(item.url).netloc.lower() == expected_host), None)
-        if page is None:
-            return [], f"{site['name']}：请先点击“打开此站验证”，在可视 Chrome 中打开该站点后再采集"
-        await page.wait_for_timeout(800)
-        entries = await page.locator("a[href]").evaluate_all(
-            """items => items.slice(0, 350).map(item => ({
-                title: (item.innerText || item.textContent || '').replace(/\\s+/g, ' ').trim(),
-                href: item.href || '',
-                context: ((item.closest('tr, li, article, .item, .list-item, .notice-item, .news-item') || item.parentElement || item).innerText || '').replace(/\\s+/g, ' ').trim()
-            }))"""
-        )
+        if not browser.contexts:
+            return [], f"{site['name']}：未发现已验证的 Chrome 会话，请先进行一次人工验证"
+        page = await browser.contexts[0].new_page()
+        try:
+            await page.goto(site["url"], wait_until="domcontentloaded", timeout=45000)
+            await page.wait_for_timeout(1800)
+            entries = await page.locator("a[href]").evaluate_all(
+                """items => items.slice(0, 350).map(item => ({
+                    title: (item.innerText || item.textContent || '').replace(/\\s+/g, ' ').trim(),
+                    href: item.href || '',
+                    context: ((item.closest('tr, li, article, .item, .list-item, .notice-item, .news-item') || item.parentElement || item).innerText || '').replace(/\\s+/g, ' ').trim()
+                }))"""
+            )
+        finally:
+            await page.close()
     found, visited = [], set()
     for item in entries:
         title, href = item["title"], item["href"]
@@ -162,6 +164,8 @@ async def _collect_dynamic_site(site: dict, target_date: str, keywords: list[str
         terms = [word for word in keywords if word.casefold() in title.casefold()]
         if terms:
             found.append({"source": site["name"], "title": title, "url": href, "published_date": target_date, "notice_type": "人工验证后动态采集", "matched_terms": terms})
+    if not found and not entries:
+        return [], f"{site['name']}：后台页面未读取到公告链接；若网站显示登录或验证，请进行一次人工验证后再运行"
     return found, ""
 
 
