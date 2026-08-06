@@ -10,6 +10,7 @@ from fastapi import FastAPI, Form, Request
 from fastapi.responses import PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 from .database import connect, init_db, now_text, set_setting, setting
 from .connectors.custom import profile_site, validate_public_url, validate_site_name
@@ -18,6 +19,20 @@ app = FastAPI(title="招标采集管理平台")
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 scheduler = BackgroundScheduler(timezone="Asia/Shanghai")
+SESSION_COOKIE = "tender_session"
+SESSION_TTL_SECONDS = 8 * 60 * 60
+
+
+def session_serializer() -> URLSafeTimedSerializer:
+    return URLSafeTimedSerializer(os.getenv("APP_SECRET", "development-secret-change-me"), salt="tender-platform-session")
+
+
+def has_valid_session(request: Request, username: str) -> bool:
+    token = request.cookies.get(SESSION_COOKIE, "")
+    try:
+        return secrets.compare_digest(session_serializer().loads(token, max_age=SESSION_TTL_SECONDS), username)
+    except (BadSignature, TypeError):
+        return False
 
 
 @app.middleware("http")
@@ -33,9 +48,13 @@ async def require_admin(request: Request, call_next):
         supplied_username, password = base64.b64decode(token).decode().split(":", 1)
     except Exception:
         scheme, supplied_username, password = "", "", ""
-    if not configured or scheme.lower() != "basic" or supplied_username != username or not secrets.compare_digest(password, configured):
+    basic_ok = bool(configured and scheme.lower() == "basic" and supplied_username == username and secrets.compare_digest(password, configured))
+    if not basic_ok and not has_valid_session(request, username):
         return PlainTextResponse("需要管理员登录", status_code=401, headers={"WWW-Authenticate": 'Basic realm="Tender Platform"'})
-    return await call_next(request)
+    response = await call_next(request)
+    if basic_ok:
+        response.set_cookie(SESSION_COOKIE, session_serializer().dumps(username), max_age=SESSION_TTL_SECONDS, httponly=True, secure=True, samesite="strict", path="/")
+    return response
 
 
 def dashboard_context() -> dict:

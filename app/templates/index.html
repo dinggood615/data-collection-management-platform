@@ -5,7 +5,7 @@
   <title>招标采集管理平台</title><link rel="stylesheet" href="/static/app.css">
 </head>
 <body>
-<header class="hero"><div class="brand"><span class="brand-mark">招</span><div><h1>招标采集管理平台</h1><p>前一天公告 · 智能适配 · 关键词日报</p></div></div><div class="hero-actions"><a class="verify-link" href="/manual-verify/vnc.html?autoconnect=1" target="_blank" rel="noopener">打开人工验证浏览器</a><form action="/run" method="post"><button class="primary">立即采集</button></form></div></header>
+<header class="hero"><div class="brand"><span class="brand-mark">招</span><div><h1>招标采集管理平台</h1><p>前一天公告 · 智能适配 · 关键词日报</p></div></div><div class="hero-actions"><a class="verify-link" href="/manual-verify/vnc.html?autoconnect=1&amp;path=manual-verify/websockify" target="_blank" rel="noopener">打开人工验证浏览器</a><form action="/run" method="post"><button class="primary">立即采集</button></form></div></header>
 <main>
 <section class="card account-card"><div class="section-title"><span class="icon">◈</span><div><h2>管理员账户</h2><p class="muted">初始账户为 admin / admin。请在首次登录后立即修改。</p></div></div><form action="/admin-credentials" method="post" class="site-form"><input name="admin_username" value="{{ admin_username }}" required><input type="password" name="new_password" placeholder="新密码，至少 8 位" required><input type="password" name="confirm_password" placeholder="确认新密码" required><button>保存账户</button></form></section>
 
