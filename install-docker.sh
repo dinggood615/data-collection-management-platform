@@ -17,7 +17,7 @@ if [ -d "$INSTALL_DIR/.git" ]; then git -C "$INSTALL_DIR" pull --ff-only; else g
 cd "$INSTALL_DIR"
 if [ ! -f .env ]; then
   cp .env.example .env
-  sed -i "s|APP_SECRET=.*|APP_SECRET=$(openssl rand -hex 32)|;s|ADMIN_PASSWORD=.*|ADMIN_PASSWORD=$(openssl rand -base64 24 | tr -dc A-Za-z0-9 | head -c 18)|" .env
+  sed -i "s|APP_SECRET=.*|APP_SECRET=$(openssl rand -hex 32)|;s|ADMIN_USERNAME=.*|ADMIN_USERNAME=admin|;s|ADMIN_PASSWORD=.*|ADMIN_PASSWORD=admin|" .env
   chmod 600 .env
 fi
 docker compose up -d --build
