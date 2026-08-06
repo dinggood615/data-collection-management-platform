@@ -12,6 +12,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .database import connect, init_db, now_text, set_setting, setting
+from .connectors.custom import profile_site, validate_public_url
 
 app = FastAPI(title="招标采集管理平台")
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -42,7 +43,8 @@ def dashboard_context() -> dict:
         keywords = db.execute("SELECT * FROM keywords WHERE enabled=1 ORDER BY term").fetchall()
         runs = db.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 8").fetchall()
         results = db.execute("SELECT * FROM tenders ORDER BY first_seen_at DESC LIMIT 20").fetchall()
-    return {"sites": sites, "keywords": keywords, "runs": runs, "results": results,
+        custom_sites = db.execute("SELECT * FROM custom_sites ORDER BY id DESC").fetchall()
+    return {"sites": sites, "keywords": keywords, "runs": runs, "results": results, "custom_sites": custom_sites,
             "schedule": setting("schedule", "08:00"), "recipient": setting("recipient"),
             "smtp_host": setting("smtp_host", "smtp.163.com"), "smtp_port": setting("smtp_port", "465"),
             "smtp_user": setting("smtp_user"), "smtp_from": setting("smtp_from"),
@@ -70,6 +72,28 @@ def home(request: Request):
 def toggle_site(code: str):
     with connect() as db:
         db.execute("UPDATE sites SET enabled=1-enabled WHERE code=?", (code,))
+    return RedirectResponse("/", 303)
+
+
+@app.post("/custom-sites")
+def add_custom_site(name: str = Form(...), url: str = Form(...)):
+    try:
+        safe_url = validate_public_url(url)
+        profile = profile_site(safe_url)
+        with connect() as db:
+            db.execute("""INSERT INTO custom_sites(name,url,engine,status,list_selector,profile_note,created_at)
+                VALUES(?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET name=excluded.name,engine=excluded.engine,status=excluded.status,list_selector=excluded.list_selector,profile_note=excluded.profile_note""", (name.strip() or safe_url, profile["url"], profile["engine"], profile["status"], profile["selector"], profile["note"], now_text()))
+    except ValueError as exc:
+        set_setting("custom_site_message", str(exc))
+    except Exception as exc:
+        set_setting("custom_site_message", f"自动适配失败：{type(exc).__name__}")
+    return RedirectResponse("/", 303)
+
+
+@app.post("/custom-sites/{site_id}/toggle")
+def toggle_custom_site(site_id: int):
+    with connect() as db:
+        db.execute("UPDATE custom_sites SET enabled=1-enabled WHERE id=?", (site_id,))
     return RedirectResponse("/", 303)
 
 

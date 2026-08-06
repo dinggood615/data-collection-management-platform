@@ -25,6 +25,7 @@ if [ ! -f "$INSTALL_DIR/.env" ]; then
 fi
 install -d -o "$SERVICE_USER" -g "$SERVICE_USER" "$INSTALL_DIR/data"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
+"$INSTALL_DIR/install-browser.sh" "$INSTALL_DIR" "$SERVICE_USER"
 cat >/etc/systemd/system/tender-platform.service <<EOF
 [Unit]
 Description=招标采集管理平台

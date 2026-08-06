@@ -57,6 +57,17 @@ def init_db() -> None:
             matched_count INTEGER NOT NULL DEFAULT 0, new_count INTEGER NOT NULL DEFAULT 0,
             message TEXT NOT NULL DEFAULT ''
         );
+        CREATE TABLE IF NOT EXISTS custom_sites (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            name TEXT NOT NULL, url TEXT NOT NULL UNIQUE,
+            enabled INTEGER NOT NULL DEFAULT 1,
+            engine TEXT NOT NULL DEFAULT 'Fetcher',
+            status TEXT NOT NULL DEFAULT '待自动适配',
+            list_selector TEXT NOT NULL DEFAULT 'a',
+            date_pattern TEXT NOT NULL DEFAULT '',
+            profile_note TEXT NOT NULL DEFAULT '',
+            created_at TEXT NOT NULL
+        );
         """)
         for site in DEFAULT_SITES:
             db.execute("INSERT OR IGNORE INTO sites(code,name,category,engine) VALUES(?,?,?,?)", site)
