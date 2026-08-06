@@ -241,9 +241,11 @@ def open_site_for_manual_verification(site_id: int):
 def delete_custom_site(site_id: int):
     message = ""
     with connect() as db:
-        site = db.execute("SELECT name FROM custom_sites WHERE id=?", (site_id,)).fetchone()
+        site = db.execute("SELECT name,builtin_code FROM custom_sites WHERE id=?", (site_id,)).fetchone()
         if site:
             db.execute("DELETE FROM custom_sites WHERE id=?", (site_id,))
+            if site["builtin_code"]:
+                db.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (f"retired_builtin_{site['builtin_code']}", site["builtin_code"]))
             message = f"已删除自定义站点：{site['name']}"
         else:
             message = "未找到该站点"

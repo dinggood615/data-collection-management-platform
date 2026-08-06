@@ -16,6 +16,7 @@ DEFAULT_SITES = (
     ("zjenergy", "浙江能源招标项目公告", "全部", "普通 Fetcher"),
 )
 BUILTIN_CUSTOM_SITES = (
+    ("chdtp", "中国华电电子商务平台（四类公告）", "https://www.chdtp.com/pages/wzglS/cgxx/caigou.jsp?cgtype=4", "动态浏览器（已验证 Chrome）"),
     ("szecp_tender", "华润守正招标公告", "https://www.szecp.com.cn/first_zbgg/index.html", "动态浏览器（已验证 Chrome）"),
     ("szecp_purchase", "华润守正采购公告", "https://www.szecp.com.cn/first_cggg/index.html", "动态浏览器（已验证 Chrome）"),
     ("zjenergy", "浙江能源招标项目公告", "https://zsrm.zjenergy.com.cn/zjnycms/category/iframe.html?dates=3&categoryId=2&tenderMethod=01&page=1", "专用 Fetcher"),
@@ -104,6 +105,15 @@ def init_db() -> None:
                     VALUES(?,?,?,?,?,?,?,?,?)""", (name, url, enabled_by_code.get(code, 1), engine,
                         "已适配（专用采集器）", "a", "平台内置的专用采集规则。可打开此站进行人工查看；删除仅从平台管理列表移除。", code, now_text()))
             db.execute("INSERT INTO settings(key,value) VALUES('builtin_custom_sites_migrated','1')")
+        else:
+            # New built-in sources may be added by platform upgrades; deleted
+            # entries are remembered and therefore are not restored here.
+            known = {row["builtin_code"] for row in db.execute("SELECT builtin_code FROM custom_sites WHERE builtin_code IS NOT NULL")}
+            retired = {row["value"] for row in db.execute("SELECT value FROM settings WHERE key LIKE 'retired_builtin_%'")}
+            for code, name, url, engine in BUILTIN_CUSTOM_SITES:
+                if code not in known and code not in retired:
+                    db.execute("""INSERT INTO custom_sites(name,url,enabled,engine,status,list_selector,profile_note,builtin_code,created_at)
+                        VALUES(?,?,?,?,?,?,?,?,?)""", (name,url,1,engine,"已适配（专用采集器）","a","平台内置的专用采集规则。",code,now_text()))
 
 
 def _cipher() -> Fernet:

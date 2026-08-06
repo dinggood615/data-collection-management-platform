@@ -9,6 +9,7 @@ from email.message import EmailMessage
 
 from .connectors.szecp import collect_szecp
 from .connectors.zjenergy import collect_zjenergy
+from .connectors.chdtp import collect_chdtp
 from .connectors.custom import collect_custom_site
 from .database import connect, setting
 
@@ -26,6 +27,11 @@ def collect_enabled_sites(target_date: str) -> tuple[int, int, str]:
             notices.append(warning)
     if "zjenergy" in enabled:
         batch, warning = collect_zjenergy(target_date, keywords)
+        items.extend(batch)
+        if warning:
+            notices.append(warning)
+    if "chdtp" in enabled:
+        batch, warning = collect_chdtp(target_date, keywords)
         items.extend(batch)
         if warning:
             notices.append(warning)
