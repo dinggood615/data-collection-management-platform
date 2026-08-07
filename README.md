@@ -20,17 +20,6 @@
 
 支持使用 `systemd` 的 Ubuntu、Debian、RHEL、Rocky Linux、AlmaLinux、CentOS Stream、Fedora、openSUSE 和 Arch Linux。脚本会安装 Python、浏览器运行环境、Nginx、Chrome/Chromium、Xvfb 与 noVNC。
 
-仓库为私有仓库时，请在 GitHub 创建一个具有该仓库只读权限的 fine-grained access token，然后在服务器执行以下命令。令牌只存在于当前终端环境中，不会写入平台配置或 Git 远程地址：
-
-```bash
-read -rsp 'GitHub Token: ' GITHUB_TOKEN; echo
-export GITHUB_TOKEN
-curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" https://raw.githubusercontent.com/dinggood615/tender-collection-platform/main/install-linux.sh | sudo -E bash -s -- https://github.com/dinggood615/tender-collection-platform.git
-unset GITHUB_TOKEN
-```
-
-如果以后将仓库改为公开，可使用无需令牌的简化命令：
-
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dinggood615/tender-collection-platform/main/install-linux.sh | sudo bash -s -- https://github.com/dinggood615/tender-collection-platform.git
 ```
@@ -47,10 +36,8 @@ sudo -E PORT=8443 bash install-linux.sh https://github.com/dinggood615/tender-co
 
 适用于已有 Docker 且不使用 systemd 的环境：
 
-私有仓库同样需要先设置上述 `GITHUB_TOKEN`，然后执行：
-
 ```bash
-curl -fsSL -H "Authorization: Bearer $GITHUB_TOKEN" https://raw.githubusercontent.com/dinggood615/tender-collection-platform/main/install-docker.sh | sudo -E bash -s -- https://github.com/dinggood615/tender-collection-platform.git
+curl -fsSL https://raw.githubusercontent.com/dinggood615/tender-collection-platform/main/install-docker.sh | sudo bash -s -- https://github.com/dinggood615/tender-collection-platform.git
 ```
 
 ## 安装后的首次配置
