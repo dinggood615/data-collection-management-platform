@@ -4,6 +4,7 @@ import os
 import sqlite3
 import base64
 import hashlib
+from pathlib import Path
 from contextlib import contextmanager
 from datetime import datetime
 
@@ -76,6 +77,27 @@ def init_db() -> None:
         )
         for key, value in defaults:
             db.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (key, value))
+
+
+def backup_database(retention_days: int) -> Path:
+    """Create a consistent SQLite backup and prune older platform backups."""
+    retention_days = max(1, min(int(retention_days), 3650))
+    source_path = Path(db_path())
+    backup_dir = Path(os.getenv("BACKUP_DIR", str(source_path.parent / "backups")))
+    backup_dir.mkdir(parents=True, exist_ok=True)
+    target = backup_dir / f"platform-{datetime.now().astimezone():%Y%m%d-%H%M%S}.sqlite3"
+    source = sqlite3.connect(source_path)
+    destination = sqlite3.connect(target)
+    try:
+        source.backup(destination)
+    finally:
+        destination.close()
+        source.close()
+    cutoff = datetime.now().astimezone().timestamp() - retention_days * 86400
+    for candidate in backup_dir.glob("platform-*.sqlite3"):
+        if candidate != target and candidate.stat().st_mtime < cutoff:
+            candidate.unlink(missing_ok=True)
+    return target
 
 
 def _cipher() -> Fernet:

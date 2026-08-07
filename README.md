@@ -12,6 +12,8 @@
 - 关键词管理：支持逗号或换行批量添加并自动去重。
 - SQLite 指纹去重：同一公告不会重复入库或重复邮件发送。
 - 邮件日报：可在网页设置 SMTP、发件人、收件人和每天发送时间。
+- 健康检查：`/healthz` 返回服务和数据库就绪状态，原生安装完成后会自动校验。
+- 自动备份：每日创建 SQLite 一致性备份，可在网页设置备份时间与保留天数。
 - 安全：SMTP 授权码经 `APP_SECRET` 派生密钥加密保存；管理后台使用登录认证；noVNC 和 Chrome 调试端口不直接暴露公网。
 
 平台不会绕过验证码、登录、访问控制或反爬封禁。遇到验证码、访问频率限制或站点拒绝访问时，会停止该站点任务并给出提示。
@@ -63,6 +65,14 @@ sudo systemctl status tender-platform
 sudo journalctl -u tender-platform -f
 sudo systemctl restart tender-platform
 ```
+
+健康检查：
+
+```bash
+curl -k https://127.0.0.1:5555/healthz
+```
+
+数据库备份默认保存在安装目录的 `data/backups/`。可在后台“数据库备份”区域调整备份时间和保留天数。
 
 交互式安装、卸载入口：
 

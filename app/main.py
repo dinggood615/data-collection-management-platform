@@ -8,12 +8,12 @@ from datetime import date, timedelta
 
 from apscheduler.schedulers.background import BackgroundScheduler
 from fastapi import FastAPI, Form, Request
-from fastapi.responses import PlainTextResponse, RedirectResponse
+from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
-from .database import connect, init_db, now_text, set_setting, setting
+from .database import backup_database, connect, init_db, now_text, set_setting, setting
 from .connectors.custom import profile_site, profile_site_from_manual_browser, validate_public_url, validate_site_name
 
 app = FastAPI(title="数据采集管理平台")
@@ -40,7 +40,7 @@ def has_valid_session(request: Request, username: str) -> bool:
 @app.middleware("http")
 async def require_admin(request: Request, call_next):
     """Keep the dashboard private even when Docker publishes port 8000."""
-    if request.url.path.startswith("/static/"):
+    if request.url.path.startswith("/static/") or request.url.path == "/healthz":
         return await call_next(request)
     configured = setting("admin_password", os.getenv("ADMIN_PASSWORD", "admin"), secret=True)
     username = setting("admin_username", os.getenv("ADMIN_USERNAME", "admin"))
@@ -88,7 +88,10 @@ def dashboard_context() -> dict:
             "smtp_host": setting("smtp_host", "smtp.163.com"), "smtp_port": setting("smtp_port", "465"),
             "smtp_user": setting("smtp_user"), "smtp_from": setting("smtp_from"),
             "smtp_configured": bool(setting("smtp_auth_code", secret=True)), "admin_username": setting("admin_username", "admin"),
-            "custom_site_message": setting("custom_site_message")}
+            "custom_site_message": setting("custom_site_message"),
+            "backup_schedule": setting("backup_schedule", "02:20"),
+            "backup_retention_days": setting("backup_retention_days", "14"),
+            "last_backup": setting("last_backup"), "backup_message": setting("backup_message")}
 
 
 @app.on_event("startup")
@@ -106,6 +109,17 @@ def shutdown() -> None:
 @app.get("/")
 def home(request: Request):
     return templates.TemplateResponse(request, "index.html", dashboard_context())
+
+
+@app.get("/healthz")
+def healthz():
+    """Minimal unauthenticated liveness/readiness check for reverse proxies."""
+    try:
+        with connect() as db:
+            db.execute("SELECT 1").fetchone()
+        return {"status": "ok"}
+    except Exception:
+        return JSONResponse({"status": "error"}, status_code=503)
 
 
 @app.get("/_internal/auth-check", status_code=204)
@@ -275,6 +289,22 @@ def save_settings(schedule: str = Form(...), recipient: str = Form(...), smtp_ho
     return RedirectResponse("/", 303)
 
 
+@app.post("/backup-settings")
+def save_backup_settings(backup_schedule: str = Form(...), backup_retention_days: int = Form(...)):
+    if not 1 <= backup_retention_days <= 3650:
+        return RedirectResponse("/", 303)
+    try:
+        hour, minute = backup_schedule.split(":")
+        if not (0 <= int(hour) <= 23 and 0 <= int(minute) <= 59):
+            raise ValueError
+    except ValueError:
+        return RedirectResponse("/", 303)
+    set_setting("backup_schedule", backup_schedule)
+    set_setting("backup_retention_days", str(backup_retention_days))
+    reschedule()
+    return RedirectResponse("/", 303)
+
+
 @app.post("/admin-credentials")
 def save_admin_credentials(admin_username: str = Form(...), new_password: str = Form(...), confirm_password: str = Form(...)):
     if len(admin_username.strip()) < 3 or len(new_password) < 8 or new_password != confirm_password:
@@ -310,3 +340,14 @@ def run_now():
 def reschedule() -> None:
     hour, minute = setting("schedule", "08:00").split(":")
     scheduler.add_job(run_collection, "cron", hour=int(hour), minute=int(minute), id="daily-run", replace_existing=True)
+    backup_hour, backup_minute = setting("backup_schedule", "02:20").split(":")
+    scheduler.add_job(run_backup, "cron", hour=int(backup_hour), minute=int(backup_minute), id="daily-backup", replace_existing=True)
+
+
+def run_backup() -> None:
+    try:
+        target = backup_database(int(setting("backup_retention_days", "14")))
+        set_setting("last_backup", now_text())
+        set_setting("backup_message", f"备份完成：{target.name}")
+    except Exception as exc:
+        set_setting("backup_message", f"备份失败：{type(exc).__name__}")

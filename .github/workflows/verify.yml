@@ -1,0 +1,42 @@
+name: Verify project
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install application dependencies
+        run: python -m pip install --upgrade pip && python -m pip install -r requirements.txt
+      - name: Compile Python sources
+        run: python -m compileall app
+      - name: Check shell scripts
+        run: |
+          for script in install.sh install-linux.sh install-docker.sh install-browser.sh manage.sh uninstall-linux.sh; do
+            bash -n "$script"
+          done
+      - name: Verify database initialization and backup
+        run: |
+          export DATABASE_PATH="$RUNNER_TEMP/platform.sqlite3"
+          export BACKUP_DIR="$RUNNER_TEMP/backups"
+          python - <<'PY'
+          from app.database import backup_database, init_db
+          init_db()
+          assert backup_database(14).exists()
+          PY
+      - name: Verify health endpoint
+        run: |
+          export DATABASE_PATH="$RUNNER_TEMP/health.sqlite3"
+          python - <<'PY'
+          from fastapi.testclient import TestClient
+          from app.main import app
+          with TestClient(app) as client:
+              assert client.get('/healthz').status_code == 200
+          PY
