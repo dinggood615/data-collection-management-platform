@@ -1,7 +1,7 @@
 <!doctype html>
-<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>招标采集管理平台</title><link rel="stylesheet" href="/static/app.css"></head>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>数据采集平台</title><link rel="stylesheet" href="/static/app.css"></head>
 <body>
-<header class="hero"><div class="brand"><span class="brand-mark">招</span><div><h1>招标采集管理平台</h1><p>前一天公告 · 智能适配 · 关键词日报</p></div></div><div class="hero-actions"><a class="verify-link" href="/manual-verify/vnc.html?autoconnect=1&amp;path=manual-verify/websockify" target="_blank" rel="noopener">打开人工验证浏览器</a><form action="/run" method="post"><button class="primary">立即采集</button></form></div></header>
+<header class="hero"><div class="brand"><span class="brand-mark">数</span><div><h1>数据采集平台</h1><p>自定义站点 · 智能适配 · 关键词日报</p></div></div><div class="hero-actions"><a class="verify-link" href="/manual-verify/vnc.html?autoconnect=1&amp;path=manual-verify/websockify" target="_blank" rel="noopener">打开人工验证浏览器</a><form action="/run" method="post"><button class="primary">立即采集</button></form></div></header>
 <main>
 <section class="card"><div class="section-title"><span class="icon">◎</span><div><h2>自定义采集站点</h2><p class="muted">所有采集站点均在此统一管理。内置站点保留专用规则；新站点可自动识别并在必要时使用人工验证。</p></div></div>{% if custom_site_message %}<p class="notice">{{ custom_site_message }}</p>{% endif %}
 <form action="/custom-sites" method="post" class="site-form site-entry"><label>网站名称<input name="name" maxlength="80" placeholder="例如：某集团采购公告" required></label><label>公告列表网址<input type="url" name="url" maxlength="2048" placeholder="https://example.com/notices" required></label><button class="accent">自动识别并添加</button></form>

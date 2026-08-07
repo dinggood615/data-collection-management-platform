@@ -10,7 +10,6 @@ from datetime import datetime
 from cryptography.fernet import Fernet, InvalidToken
 
 
-DEFAULT_KEYWORDS = "软件开发,人力外包,信息化,数字化,劳务外包,人员技术服务,外包服务,系统开发,项目实施,协作开发,编码开发,数据处理,数据治理,信息系统建设,信息系统运维,管理系统,智能管控,智慧运营,网络安全,数字孪生,数字化平台,数字化系统,数智化,AIoT,云平台"
 
 
 def db_path() -> str:
@@ -67,8 +66,6 @@ def init_db() -> None:
         if "builtin_code" not in columns:
             db.execute("ALTER TABLE custom_sites ADD COLUMN builtin_code TEXT")
         db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_custom_sites_builtin_code ON custom_sites(builtin_code) WHERE builtin_code IS NOT NULL")
-        for word in DEFAULT_KEYWORDS.split(","):
-            db.execute("INSERT OR IGNORE INTO keywords(term) VALUES(?)", (word,))
         defaults = (
             ("admin_username", os.getenv("ADMIN_USERNAME", "admin")),
             ("schedule", "08:00"), ("recipient", os.getenv("SMTP_TO", "")),

@@ -16,7 +16,7 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 from .database import connect, init_db, now_text, set_setting, setting
 from .connectors.custom import profile_site, profile_site_from_manual_browser, validate_public_url, validate_site_name
 
-app = FastAPI(title="招标采集管理平台")
+app = FastAPI(title="数据采集平台")
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 templates = Jinja2Templates(directory="app/templates")
 scheduler = BackgroundScheduler(timezone="Asia/Shanghai")
