@@ -98,11 +98,14 @@ systemctl daemon-reload
 systemctl enable --now tender-platform.service
 systemctl enable nginx.service
 systemctl restart nginx.service
-for attempt in 1 2 3 4 5; do
-  if curl -kfsS "https://127.0.0.1:$PUBLIC_PORT/healthz" >/dev/null; then
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  # Check Uvicorn directly.  Nginx may still be reloading its certificate or
+  # access-control configuration, so it should not make a successful install
+  # look like a failed application start.
+  if curl -fsS "http://127.0.0.1:$BACKEND_PORT/healthz" >/dev/null; then
     break
   fi
-  [ "$attempt" -eq 5 ] && die "平台健康检查失败，请执行：journalctl -u tender-platform -n 80 --no-pager"
+  [ "$attempt" -eq 10 ] && die "平台健康检查失败，请执行：journalctl -u tender-platform -n 80 --no-pager"
   sleep 2
 done
 echo "完成：访问 https://服务器IP:$PUBLIC_PORT。初始账户 admin/admin，请立即修改。"
