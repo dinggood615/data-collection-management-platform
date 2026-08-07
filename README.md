@@ -70,6 +70,14 @@ sudo systemctl restart tender-platform
 sudo bash manage.sh
 ```
 
+## 一键卸载
+
+下列命令会停止平台服务，并删除平台程序、SQLite 数据、浏览器会话、平台 TLS 文件、专用 Nginx 配置，以及该平台创建的 Docker 容器和卷（如存在）。不会卸载 Nginx、Docker 或其他系统服务。
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-platform/main/uninstall-linux.sh | sudo bash -s -- --yes
+```
+
 ## 数据与安全建议
 
 - 原生安装的数据目录：`/opt/tender-collection-platform/data`；Docker 使用 `platform_data` 卷。
