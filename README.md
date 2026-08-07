@@ -1,6 +1,6 @@
-# 数据采集平台
+# 数据采集管理平台
 
-面向公开公告列表页的轻量化数据采集平台。通过网页添加站点、设置关键词和邮件参数后，平台按北京时间每天采集前一天的数据、去重并发送日报。
+面向公开公告列表页的轻量化数据采集管理平台。通过网页添加站点、设置关键词和邮件参数后，平台按北京时间每天采集前一天的数据、去重并发送日报。
 
 > 新安装实例不包含任何预置采集站点，也不包含任何历史采集结果。请在后台的“自定义采集站点”中按需手动添加已获授权访问的公开公告列表页。
 
@@ -21,13 +21,13 @@
 支持使用 `systemd` 的 Ubuntu、Debian、RHEL、Rocky Linux、AlmaLinux、CentOS Stream、Fedora、openSUSE 和 Arch Linux。脚本会安装 Python、浏览器运行环境、Nginx、Chrome/Chromium、Xvfb 与 noVNC。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-platform/main/install-linux.sh | sudo bash -s -- https://github.com/dinggood615/data-collection-platform.git
+curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-management-platform/main/install-linux.sh | sudo bash -s -- https://github.com/dinggood615/data-collection-management-platform.git
 ```
 
 默认使用 HTTPS 的 `5555` 端口。更换端口示例：
 
 ```bash
-sudo -E PORT=8443 bash install-linux.sh https://github.com/dinggood615/data-collection-platform.git
+curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-management-platform/main/install-linux.sh | sudo env PORT=8443 bash -s -- https://github.com/dinggood615/data-collection-management-platform.git
 ```
 
 首次登录为 `admin / admin`。请在页面底部“管理员账户”立即修改为强密码。
@@ -37,7 +37,7 @@ sudo -E PORT=8443 bash install-linux.sh https://github.com/dinggood615/data-coll
 适用于已有 Docker 且不使用 systemd 的环境：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-platform/main/install-docker.sh | sudo bash -s -- https://github.com/dinggood615/data-collection-platform.git
+curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-management-platform/main/install-docker.sh | sudo bash -s -- https://github.com/dinggood615/data-collection-management-platform.git
 ```
 
 ## 安装后的首次配置
@@ -75,12 +75,12 @@ sudo bash manage.sh
 下列命令会停止平台服务，并删除平台程序、SQLite 数据、浏览器会话、平台 TLS 文件、专用 Nginx 配置，以及该平台创建的 Docker 容器和卷（如存在）。不会卸载 Nginx、Docker 或其他系统服务。
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-platform/main/uninstall-linux.sh | sudo bash -s -- --yes
+curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-management-platform/main/uninstall-linux.sh | sudo bash -s -- --yes
 ```
 
 ## 数据与安全建议
 
-- 原生安装的数据目录：`/opt/tender-collection-platform/data`；Docker 使用 `platform_data` 卷。
+- 原生安装的数据目录：`/opt/data-collection-management-platform/data`；Docker 使用 `platform_data` 卷。
 - 不要提交 `.env`、SMTP 授权码、服务器密码或 `APP_SECRET`。
 - 生产环境应配置有效 TLS 证书，并仅向可信网络开放管理端口。
 - noVNC、VNC 和 Chrome 调试端口仅应监听本机；不要单独开放到公网。

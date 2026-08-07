@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-INSTALL_DIR="${INSTALL_DIR:-/opt/tender-collection-platform}"
-REPOSITORY_URL="${REPOSITORY_URL:-https://github.com/dinggood615/data-collection-platform.git}"
+INSTALL_DIR="${INSTALL_DIR:-/opt/data-collection-management-platform}"
+REPOSITORY_URL="${REPOSITORY_URL:-https://github.com/dinggood615/data-collection-management-platform.git}"
 
 if [ "${EUID}" -ne 0 ]; then echo "请使用 sudo 运行"; exit 1; fi
 echo "1) 原生 Linux 安装  2) Docker 安装  3) 卸载"

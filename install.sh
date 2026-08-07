@@ -1,15 +1,11 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-REPOSITORY_URL="${1:-https://github.com/REPLACE_ME/tender-collection-platform.git}"
-INSTALL_DIR="${INSTALL_DIR:-/opt/tender-collection-platform}"
+REPOSITORY_URL="${1:-https://github.com/dinggood615/data-collection-management-platform.git}"
+INSTALL_DIR="${INSTALL_DIR:-/opt/data-collection-management-platform}"
 
 if [ "${EUID}" -ne 0 ]; then
   echo "请使用 sudo 运行：sudo bash install.sh"
-  exit 1
-fi
-if [[ "$REPOSITORY_URL" == *"REPLACE_ME"* ]]; then
-  echo "用法：sudo bash install.sh https://github.com/<账号>/tender-collection-platform.git"
   exit 1
 fi
 

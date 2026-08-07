@@ -2,8 +2,8 @@
 set -euo pipefail
 
 # One-command native installer for systemd Linux distributions.
-REPOSITORY_URL="${1:-https://github.com/REPLACE_ME/tender-collection-platform.git}"
-INSTALL_DIR="${INSTALL_DIR:-/opt/tender-collection-platform}"
+REPOSITORY_URL="${1:-https://github.com/dinggood615/data-collection-management-platform.git}"
+INSTALL_DIR="${INSTALL_DIR:-/opt/data-collection-management-platform}"
 SERVICE_USER="tenderplatform"
 PUBLIC_PORT="${PORT:-5555}"
 BACKEND_PORT=8000
@@ -12,7 +12,6 @@ TLS_DIR=/etc/tender-platform/tls
 die() { echo "错误：$*" >&2; exit 1; }
 [ "${EUID}" -eq 0 ] || die "请使用 sudo 运行"
 [ -d /run/systemd/system ] || die "原生安装需要 systemd；容器环境请使用 Docker 安装。"
-[[ "$REPOSITORY_URL" != *"REPLACE_ME"* ]] || die "用法：sudo bash install-linux.sh https://github.com/<账号>/tender-collection-platform.git"
 
 install_packages() {
   if command -v apt-get >/dev/null; then

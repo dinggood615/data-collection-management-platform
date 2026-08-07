@@ -1,14 +1,14 @@
 [Unit]
-Description=招标采集管理平台
+Description=数据采集管理平台
 After=network-online.target
 Wants=network-online.target
 
 [Service]
 User=tenderplatform
 Group=tenderplatform
-WorkingDirectory=/opt/tender-collection-platform
-EnvironmentFile=/opt/tender-collection-platform/.env
-ExecStart=/opt/tender-collection-platform/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+WorkingDirectory=/opt/data-collection-management-platform
+EnvironmentFile=/opt/data-collection-management-platform/.env
+ExecStart=/opt/data-collection-management-platform/.venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
 Restart=on-failure
 RestartSec=5
 
