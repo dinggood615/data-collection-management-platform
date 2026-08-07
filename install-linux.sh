@@ -52,6 +52,9 @@ if [ ! -f "$INSTALL_DIR/.env" ]; then
 fi
 install -d -o "$SERVICE_USER" -g "$SERVICE_USER" "$INSTALL_DIR/data"
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
+# Initialize SQLite before the authenticated web endpoint is exposed.  This
+# prevents a first-request race from creating an empty database file.
+su -s /bin/bash "$SERVICE_USER" -c "set -a; source '$INSTALL_DIR/.env'; set +a; cd '$INSTALL_DIR'; .venv/bin/python -c 'from app.database import init_db; init_db()'"
 "$INSTALL_DIR/install-browser.sh" "$INSTALL_DIR" "$SERVICE_USER" || echo "提示：可视 Chrome 未安装；静态采集仍可使用。"
 
 cat >/etc/systemd/system/tender-platform.service <<EOF
