@@ -55,7 +55,9 @@ chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
 # Initialize SQLite before the authenticated web endpoint is exposed.  This
 # prevents a first-request race from creating an empty database file.
 su -s /bin/bash "$SERVICE_USER" -c "set -a; source '$INSTALL_DIR/.env'; set +a; cd '$INSTALL_DIR'; .venv/bin/python -c 'from app.database import init_db; init_db()'"
-"$INSTALL_DIR/install-browser.sh" "$INSTALL_DIR" "$SERVICE_USER" || echo "提示：可视 Chrome 未安装；静态采集仍可使用。"
+# Invoke explicitly with bash: Git mirrors may not preserve executable bits.
+bash "$INSTALL_DIR/install-browser.sh" "$INSTALL_DIR" "$SERVICE_USER"
+systemctl is-active --quiet tender-manual-browser.service || die "可视 Chrome 服务未能启动，请检查 tender-manual-browser.service 日志"
 
 cat >/etc/systemd/system/tender-platform.service <<EOF
 [Unit]
