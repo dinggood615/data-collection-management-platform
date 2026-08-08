@@ -47,6 +47,15 @@ valid_domain() {
   [ -z "$DOMAIN" ] || printf '%s' "$DOMAIN" | grep -Eq '^[A-Za-z0-9]([A-Za-z0-9.-]{0,251}[A-Za-z0-9])?$'
 }
 
+open_tls_firewall_ports() {
+  # Ubuntu/Debian deployments commonly use UFW.  Opening these ports here
+  # prevents a successful DNS update from still failing the ACME HTTP check.
+  if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q 'Status: active'; then
+    ufw allow 80/tcp
+    ufw allow 443/tcp
+  fi
+}
+
 git_repo() {
   if [ -n "${GITHUB_TOKEN:-}" ]; then
     git -c http.extraHeader="Authorization: Bearer ${GITHUB_TOKEN}" "$@"
@@ -137,6 +146,7 @@ for attempt in 1 2 3 4 5 6 7 8 9 10; do
 done
 if [ -n "$DOMAIN" ]; then
   echo "正在为 $DOMAIN 申请 Let's Encrypt 证书；请确认 DNS 已解析到本服务器且已放行 80、443。"
+  open_tls_firewall_ports
   install_certbot
   systemctl stop nginx.service
   CERTBOT_ARGS=(certonly --standalone --non-interactive --agree-tos --keep-until-expiring -d "$DOMAIN")
