@@ -1,6 +1,10 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Keep template and source decoding deterministic on minimal Linux images.
+export LANG="${LANG:-C.UTF-8}"
+export LC_ALL="${LC_ALL:-C.UTF-8}"
+
 # One-command native installer for systemd Linux distributions.
 REPOSITORY_URL="${1:-https://github.com/dinggood615/data-collection-management-platform.git}"
 INSTALL_DIR="${INSTALL_DIR:-/opt/data-collection-management-platform}"
@@ -88,6 +92,8 @@ prompt_tls_settings
 valid_domain || die "DOMAIN 格式不正确；请只填写域名，例如 tender.example.com。"
 id "$SERVICE_USER" >/dev/null 2>&1 || useradd --system --create-home --shell /usr/sbin/nologin "$SERVICE_USER"
 if [ -d "$INSTALL_DIR/.git" ]; then git_repo -C "$INSTALL_DIR" pull --ff-only; else git_repo clone "$REPOSITORY_URL" "$INSTALL_DIR"; fi
+find "$INSTALL_DIR/app" -type f \( -name '*.py' -o -name '*.html' -o -name '*.css' \) -print0 |
+  xargs -0 -r -n1 iconv -f UTF-8 -t UTF-8 >/dev/null || die "应用文件不是 UTF-8 编码，请重新下载项目后再安装。"
 python3 -m venv "$INSTALL_DIR/.venv"
 "$INSTALL_DIR/.venv/bin/pip" install --upgrade pip wheel
 "$INSTALL_DIR/.venv/bin/pip" install -r "$INSTALL_DIR/requirements.txt"
