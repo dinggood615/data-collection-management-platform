@@ -33,13 +33,9 @@ curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-managem
 curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-management-platform/main/install-linux.sh | sudo env PORT=8443 bash -s -- https://github.com/dinggood615/data-collection-management-platform.git
 ```
 
-如需企业微信聊天助手或受信任 HTTPS，请在安装前把域名 A 记录解析到服务器公网 IP，并使用以下命令。安装器会自动监听 `443`、在已启用 UFW 时放行 `80/443`、申请 Let's Encrypt 证书并启用自动续期：
+如需企业微信聊天助手或受信任 HTTPS，先将域名 A 记录解析到服务器公网 IP，然后直接运行上方的一键安装命令。安装过程中会询问是否配置 HTTPS、域名和证书通知邮箱；确认后会自动监听 `443`、在已启用 UFW 时放行 `80/443`、申请 Let's Encrypt 证书并启用自动续期。
 
-```bash
-curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-management-platform/main/install-linux.sh | sudo env DOMAIN=tender.example.com LETSENCRYPT_EMAIL=you@example.com bash -s -- https://github.com/dinggood615/data-collection-management-platform.git
-```
-
-`DOMAIN` 仅填写域名，不含 `https://`、路径或端口。腾讯云、阿里云等平台仍需在云安全组中放行 TCP `80`、`443`；未传入 `DOMAIN` 时平台会使用自签名证书，企业微信聊天回调无法使用。
+腾讯云、阿里云等平台仍需在云安全组中放行 TCP `80`、`443`。选择跳过 HTTPS 时平台会使用自签名证书，企业微信聊天回调不可用。
 
 首次登录为 `admin / admin`。请在页面底部“管理员账户”立即修改为强密码。
 
