@@ -74,6 +74,11 @@ def init_db() -> None:
             ("smtp_port", os.getenv("SMTP_PORT", "465")),
             ("smtp_user", os.getenv("SMTP_USER", "")),
             ("smtp_from", os.getenv("SMTP_FROM", "")),
+            ("wecom_corp_id", os.getenv("WECOM_CORP_ID", "")),
+            ("wecom_callback_token", os.getenv("WECOM_CALLBACK_TOKEN", "")),
+            ("wecom_encoding_aes_key", os.getenv("WECOM_ENCODING_AES_KEY", "")),
+            ("wecom_admin_users", os.getenv("WECOM_ADMIN_USERS", "")),
+            ("wecom_public_url", os.getenv("WECOM_PUBLIC_URL", "")),
         )
         for key, value in defaults:
             db.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (key, value))
