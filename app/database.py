@@ -79,6 +79,9 @@ def init_db() -> None:
             ("wecom_encoding_aes_key", os.getenv("WECOM_ENCODING_AES_KEY", "")),
             ("wecom_admin_users", os.getenv("WECOM_ADMIN_USERS", "")),
             ("wecom_public_url", os.getenv("WECOM_PUBLIC_URL", "")),
+            ("wecom_webhook", os.getenv("WECOM_WEBHOOK", "")),
+            ("wecom_push_enabled", os.getenv("WECOM_PUSH_ENABLED", "0")),
+            ("wecom_push_message", ""),
         )
         for key, value in defaults:
             db.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (key, value))

@@ -94,6 +94,9 @@ def dashboard_context() -> dict:
             "backup_retention_days": setting("backup_retention_days", "14"),
             "last_backup": setting("last_backup"), "backup_message": setting("backup_message"),
             "wecom_message": setting("wecom_message"),
+            "wecom_push_message": setting("wecom_push_message"),
+            "wecom_webhook_configured": bool(setting("wecom_webhook", secret=True)),
+            "wecom_push_enabled": setting("wecom_push_enabled", "0") == "1",
             "wecom_callback_url": _wecom_callback_url(),
             "wecom_callback_token_value": setting("wecom_callback_token", secret=True),
             "wecom_encoding_aes_key_value": setting("wecom_encoding_aes_key", secret=True)}
@@ -322,6 +325,44 @@ def save_admin_credentials(admin_username: str = Form(...), new_password: str = 
 def _wecom_callback_url() -> str:
     public_url = setting("wecom_public_url", "").rstrip("/")
     return f"{public_url}/wecom/callback" if public_url else ""
+
+
+def _validate_wecom_webhook(value: str) -> str:
+    """Accept only Enterprise WeChat robot webhooks, never arbitrary outbound URLs."""
+    parsed = urlparse(value.strip())
+    if parsed.scheme != "https" or parsed.netloc != "qyapi.weixin.qq.com" or not parsed.path.startswith("/cgi-bin/webhook/send"):
+        raise ValueError("请输入企业微信机器人 Webhook 地址。")
+    if not parsed.query:
+        raise ValueError("Webhook 地址缺少 key 参数。")
+    return value.strip()
+
+
+@app.post("/wecom/push-settings")
+def save_wecom_push_settings(webhook: str = Form(""), enabled: str = Form("0")):
+    try:
+        if webhook.strip():
+            set_setting("wecom_webhook", _validate_wecom_webhook(webhook), secret=True)
+        set_setting("wecom_push_enabled", "1" if enabled == "1" else "0")
+        set_setting("wecom_push_message", "企业微信推送设置已保存。")
+    except ValueError as exc:
+        set_setting("wecom_push_message", str(exc))
+    return RedirectResponse("/", 303)
+
+
+@app.post("/wecom/push-test")
+def test_wecom_push():
+    from .runner import send_wecom_robot_message
+
+    webhook = setting("wecom_webhook", secret=True)
+    if not webhook:
+        set_setting("wecom_push_message", "请先填写并保存机器人 Webhook。")
+    else:
+        try:
+            send_wecom_robot_message(webhook, "数据采集管理平台测试消息\n企业微信推送已连接。")
+            set_setting("wecom_push_message", "测试消息已发送，请查看企业微信群。")
+        except Exception as exc:
+            set_setting("wecom_push_message", f"测试发送失败：{type(exc).__name__}")
+    return RedirectResponse("/", 303)
 
 
 def _new_wecom_aes_key() -> str:

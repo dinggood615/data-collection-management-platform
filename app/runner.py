@@ -4,6 +4,8 @@ import hashlib
 import os
 import smtplib
 import ssl
+import json
+from urllib.request import Request, urlopen
 from datetime import datetime
 from email.message import EmailMessage
 
@@ -33,6 +35,12 @@ def collect_enabled_sites(target_date: str) -> tuple[int, int, str]:
     smtp = {"host": setting("smtp_host", os.getenv("SMTP_HOST", "smtp.163.com")), "port": setting("smtp_port", os.getenv("SMTP_PORT", "465")), "user": setting("smtp_user", os.getenv("SMTP_USER", "")), "from": setting("smtp_from", os.getenv("SMTP_FROM", "")), "auth_code": setting("smtp_auth_code", os.getenv("SMTP_AUTH_CODE", ""), secret=True)}
     if recipient and smtp["user"] and smtp["auth_code"]:
         send_report(recipient, target_date, len(items), new_items, notices, smtp)
+    webhook = setting("wecom_webhook", secret=True)
+    if setting("wecom_push_enabled", "0") == "1" and webhook:
+        try:
+            send_wecom_robot_message(webhook, build_wecom_report(target_date, len(items), new_items, notices))
+        except Exception as exc:
+            notices.append(f"企业微信推送失败：{type(exc).__name__}")
     return len(items), len(new_items), "; ".join(notices) or "采集完成"
 
 
@@ -50,3 +58,23 @@ def send_report(recipient: str, target_date: str, matched: int, new_items: list[
     with smtplib.SMTP_SSL(smtp_config["host"], int(smtp_config["port"]), context=ssl.create_default_context()) as smtp:
         smtp.login(smtp_config["user"], smtp_config["auth_code"])
         smtp.send_message(msg)
+
+
+def build_wecom_report(target_date: str, matched: int, new_items: list[dict], notices: list[str]) -> str:
+    lines = [f"数据采集日报 {target_date}", f"关键词命中：{matched} 条｜新增：{len(new_items)} 条"]
+    for item in new_items[:10]:
+        lines.extend(("", item["title"][:120], item["url"]))
+    if len(new_items) > 10:
+        lines.append(f"另有 {len(new_items) - 10} 条结果，请登录平台查看。")
+    if notices:
+        lines.extend(("", "提示：", *notices[:3]))
+    return "\n".join(lines)
+
+
+def send_wecom_robot_message(webhook: str, text: str) -> None:
+    payload = json.dumps({"msgtype": "text", "text": {"content": text[:4000]}}, ensure_ascii=False).encode("utf-8")
+    request = Request(webhook, data=payload, headers={"Content-Type": "application/json"}, method="POST")
+    with urlopen(request, timeout=15) as response:
+        body = json.loads(response.read().decode("utf-8"))
+    if body.get("errcode") != 0:
+        raise RuntimeError(f"wechat error {body.get('errcode')}")
