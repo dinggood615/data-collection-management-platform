@@ -123,6 +123,23 @@ def backup_database(retention_days: int) -> Path:
     return target
 
 
+def reset_platform_state() -> Path:
+    """Back up and atomically clear business data while preserving access and backup policy."""
+    rollback = backup_database(int(setting("backup_retention_days", "14")))
+    preserved_keys = ("admin_username", "admin_password", "backup_schedule", "backup_retention_days")
+    with connect() as db:
+        preserved = db.execute(
+            f"SELECT key,value FROM settings WHERE key IN ({','.join('?' for _ in preserved_keys)})",
+            preserved_keys,
+        ).fetchall()
+        for table in ("tenders", "runs", "keywords", "custom_sites"):
+            db.execute(f"DELETE FROM {table}")
+        db.execute("DELETE FROM sqlite_sequence WHERE name IN ('runs','custom_sites')")
+        db.execute("DELETE FROM settings")
+        db.executemany("INSERT INTO settings(key,value) VALUES(?,?)", ((row["key"], row["value"]) for row in preserved))
+    return rollback
+
+
 def export_migration_bundle() -> bytes:
     """Export a portable database plus secrets re-encrypted on the target host."""
     with tempfile.TemporaryDirectory(prefix="platform-export-") as temporary:
