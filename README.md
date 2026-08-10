@@ -35,6 +35,7 @@
 - 一键恢复初始状态：操作前自动创建回滚备份，再清空全部业务数据和通知配置；保留管理员账号、TLS 证书、程序与备份文件。
 - 企业级响应式界面：采用低噪声卡片、Bento 数据概览、清晰状态层级和键盘焦点反馈，适配手机、平板与桌面。
 - VPS 一键安全更新：自动备份数据库、执行 `git pull --ff-only`、更新依赖和数据库结构、重启服务并完成健康检查；失败时自动恢复更新前代码。
+- 多平台 Docker 生命周期管理：同一脚本覆盖 Linux、群晖 DSM、飞牛 OS 与 OpenWrt 的安装、备份更新、状态检查和安全卸载，兼容 Compose v1/v2 与 amd64/arm64 宿主机。
 - 安全：SMTP 授权码经 `APP_SECRET` 派生密钥加密保存；管理后台使用登录认证；noVNC 和 Chrome 调试端口不直接暴露公网。
 
 平台不会绕过验证码、登录、访问控制或反爬封禁。遇到验证码、访问频率限制或站点拒绝访问时，会停止该站点任务并给出提示。
@@ -61,13 +62,84 @@ curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-managem
 
 首次登录为 `admin / admin`。请在页面底部“管理员账户”立即修改为强密码。
 
-## Docker 安装
+## Docker：Linux、群晖、飞牛 OS 与 OpenWrt
 
-适用于已有 Docker 且不使用 systemd 的环境：
+Docker 脚本不依赖 `apt`、`systemd` 或 Git，自动兼容 Docker Compose v2（`docker compose`）与 v1（`docker-compose`）。要求设备已经安装并启动 Docker/Compose，同时具备 `curl`、`tar`、`sed` 和 `mktemp`。默认将数据库映射到宿主机目录，更新容器不会丢失数据。
+
+### 通用 Docker 一键安装、更新和卸载
+
+安装：
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-management-platform/main/install-docker.sh | sudo bash -s -- https://github.com/dinggood615/data-collection-management-platform.git
+curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-management-platform/main/install-docker.sh | sh -s -- install
 ```
+
+更新（更新前自动尝试创建数据库备份）：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-management-platform/main/install-docker.sh | sh -s -- update
+```
+
+卸载程序和默认数据目录，需要交互确认：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-management-platform/main/install-docker.sh | sh -s -- uninstall
+```
+
+无人值守卸载使用 `uninstall --yes`。如果 `DATA_DIR` 位于安装目录之外，默认会保留；只有明确设置 `DELETE_DATA=1` 才会删除外部数据目录。脚本始终保留 Docker/Container Manager 本身。
+
+### 群晖 DSM 7 Container Manager
+
+通过 SSH 运行以下命令。默认路径是 `/volume1/docker/data-collection-management-platform`；如果套件和共享文件夹位于其他存储卷，请同时修改 `INSTALL_DIR` 与 `DATA_DIR`：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-management-platform/main/install-docker.sh | \
+  INSTALL_DIR=/volume1/docker/data-collection-management-platform \
+  DATA_DIR=/volume1/docker/data-collection-management-platform/data \
+  PLATFORM_PORT=8000 sh -s -- install
+```
+
+也可以在 Container Manager 的“项目”中选择该安装目录并导入 `docker-compose.yml`。请避免使用已被 DSM 其他服务占用的端口。
+
+### 飞牛 OS（fnOS）
+
+在飞牛终端中，将路径换成存储空间里专门创建的 Docker 项目目录：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-management-platform/main/install-docker.sh | \
+  INSTALL_DIR=/你的存储路径/docker/data-collection-management-platform \
+  DATA_DIR=/你的存储路径/docker/data-collection-management-platform/data \
+  PLATFORM_PORT=8000 sh -s -- install
+```
+
+脚本不会修改飞牛 Docker 服务，也不要求 systemd；安装后可以继续在飞牛 Docker 图形界面管理容器。
+
+### OpenWrt Docker
+
+OpenWrt 建议把 Docker Root Dir 和本平台数据放到 ext4 等 Linux 文件系统的外接存储，不建议使用内部闪存、FAT 或 NTFS。示例路径请按实际挂载点修改：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-management-platform/main/install-docker.sh | \
+  INSTALL_DIR=/mnt/external/docker/data-collection-management-platform \
+  DATA_DIR=/mnt/external/docker/data-collection-management-platform/data \
+  PLATFORM_PORT=8000 sh -s -- install
+```
+
+OpenWrt 可通过 `dockerd`、`docker`、`docker-compose` 或 LuCI 的 `luci-app-dockerman` 提供容器环境。由于本项目需要在设备上构建 Python 镜像，更适合 x86_64/aarch64、外接存储且内存充足的软路由；低内存路由器可能无法完成镜像构建。
+
+### Docker 可配置参数
+
+| 参数 | 默认值 | 作用 |
+| --- | --- | --- |
+| `INSTALL_DIR` | Linux `/opt/...`；群晖 `/volume1/docker/...`；OpenWrt `/opt/docker/...` | 程序与 Compose 项目目录 |
+| `DATA_DIR` | `$INSTALL_DIR/data` | SQLite、选择器与备份的持久化目录 |
+| `PLATFORM_PORT` | `8000` | 管理页面宿主机端口 |
+| `TZ` | `Asia/Shanghai` | 容器时区 |
+| `BRANCH` | `main` | 安装或更新的 GitHub 分支 |
+| `GITHUB_TOKEN` | 空 | 私有仓库源码包访问令牌 |
+| `DELETE_DATA` | `0` | 卸载时是否删除安装目录外的数据目录 |
+
+Docker 版提供静态站点采集、数据库、邮件、企业微信、备份迁移和恢复功能；不会安装宿主机可视 Chrome/noVNC。需要人工浏览器验证的动态站点，建议使用原生 Linux 版本。
 
 ## 安装后的首次配置
 
@@ -158,7 +230,7 @@ sudo bash manage.sh
 
 ## 一键卸载
 
-下列命令会停止平台服务，并删除平台程序、SQLite 数据、浏览器会话、平台 TLS 文件、专用 Nginx 配置，以及该平台创建的 Docker 容器和卷（如存在）。不会卸载 Nginx、Docker 或其他系统服务。
+下列命令用于原生 Linux 安装，会停止平台服务，并删除平台程序、SQLite 数据、浏览器会话、平台 TLS 文件和专用 Nginx 配置；如检测到 Compose 项目也会先停止容器。不会卸载 Nginx、Docker 或其他系统服务。群晖、飞牛 OS、OpenWrt 等 Docker 环境优先使用前文的 `install-docker.sh uninstall`。
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-management-platform/main/uninstall-linux.sh | sudo bash -s -- --yes
@@ -166,7 +238,7 @@ curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-managem
 
 ## 数据与安全建议
 
-- 原生安装的数据目录：`/opt/data-collection-management-platform/data`；Docker 使用 `platform_data` 卷。
+- 原生安装的数据目录：`/opt/data-collection-management-platform/data`；Docker 使用 `DATA_DIR` 指定的宿主机绑定目录，默认为 `$INSTALL_DIR/data`。
 - 不要提交 `.env`、SMTP 授权码、服务器密码或 `APP_SECRET`。
 - 生产环境应配置有效 TLS 证书，并仅向可信网络开放管理端口。
 - noVNC、VNC 和 Chrome 调试端口仅应监听本机；不要单独开放到公网。

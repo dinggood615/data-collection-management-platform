@@ -22,6 +22,13 @@ jobs:
           for script in install.sh install-linux.sh install-docker.sh install-browser.sh update-linux.sh manage.sh uninstall-linux.sh; do
             bash -n "$script"
           done
+          dash -n install-docker.sh
+          sh install-docker.sh --help
+      - name: Verify portable Docker Compose configuration
+        run: |
+          cp .env.example .env
+          DATA_DIR="$RUNNER_TEMP/platform-data" PLATFORM_PORT=18000 docker compose config --quiet
+          rm -f .env
       - name: Verify clean first-run state
         run: |
           export DATABASE_PATH="$RUNNER_TEMP/clean.sqlite3"
