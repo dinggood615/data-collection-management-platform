@@ -1,14 +1,16 @@
 services:
   tender-platform:
     build: .
-    container_name: tender-platform
     restart: unless-stopped
+    init: true
     env_file: .env
     ports:
-      - "8000:8000"
+      - "${PLATFORM_PORT:-8000}:8000"
     volumes:
-      - platform_data:/data
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
-volumes:
-  platform_data:
+      - "${DATA_DIR:-./data}:/data"
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/healthz',timeout=3)"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 30s

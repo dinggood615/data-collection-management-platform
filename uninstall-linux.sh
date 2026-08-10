@@ -15,17 +15,25 @@ if [ "$AUTO_CONFIRM" != "--yes" ]; then
 fi
 
 if [ -f "$INSTALL_DIR/docker-compose.yml" ] && command -v docker >/dev/null 2>&1; then
-  docker compose -f "$INSTALL_DIR/docker-compose.yml" down -v --remove-orphans 2>/dev/null || true
+  if docker compose version >/dev/null 2>&1; then
+    docker compose -p data-collection-platform -f "$INSTALL_DIR/docker-compose.yml" down --remove-orphans 2>/dev/null || true
+  elif command -v docker-compose >/dev/null 2>&1; then
+    docker-compose -p data-collection-platform -f "$INSTALL_DIR/docker-compose.yml" down --remove-orphans 2>/dev/null || true
+  fi
 fi
 
-systemctl disable --now tender-platform.service tender-manual-browser.service 2>/dev/null || true
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl disable --now tender-platform.service tender-manual-browser.service 2>/dev/null || true
+fi
 rm -f /etc/systemd/system/tender-platform.service /etc/systemd/system/tender-manual-browser.service
 rm -f /etc/nginx/sites-enabled/tender-platform /etc/nginx/sites-available/tender-platform /etc/nginx/conf.d/tender-platform.conf
 rm -rf /etc/tender-platform "$INSTALL_DIR"
-systemctl daemon-reload
-systemctl reset-failed
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload
+  systemctl reset-failed
+fi
 
-if command -v nginx >/dev/null 2>&1; then
+if command -v nginx >/dev/null 2>&1 && command -v systemctl >/dev/null 2>&1; then
   nginx -t && systemctl reload nginx || true
 fi
 echo "数据采集平台已卸载。Nginx、Docker 和其他系统服务未删除。"
