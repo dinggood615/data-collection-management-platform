@@ -1,6 +1,6 @@
 # 数据采集管理平台
 
-面向公开公告列表页的轻量化数据采集管理平台。通过网页添加站点、设置关键词和邮件参数后，平台按北京时间每天采集前一天的数据、去重并发送日报。
+面向公开公告列表页的智能数据采集管理平台。平台提供响应式管理控制台、站点自动识别、关键词筛选、数据去重、邮件与企业微信推送、可视浏览器验证、自动备份以及跨服务器一键迁移。通过网页完成配置后，系统可按北京时间定时采集前一天的数据并推送日报。
 
 > 新安装实例不包含任何预置采集站点，也不包含任何历史采集结果。请在后台的“自定义采集站点”中按需手动添加已获授权访问的公开公告列表页。
 
@@ -18,6 +18,7 @@
 - 自动备份：每日创建 SQLite 一致性备份，可在网页设置备份时间与保留天数。
 - 一键迁移：网页导出完整迁移包，在新服务器安装后直接导入站点、关键词、通知配置、历史结果和管理员设置；导入前自动生成回滚备份。
 - 企业级响应式界面：采用低噪声卡片、Bento 数据概览、清晰状态层级和键盘焦点反馈，适配手机、平板与桌面。
+- VPS 一键安全更新：自动备份数据库、执行 `git pull --ff-only`、更新依赖和数据库结构、重启服务并完成健康检查；失败时自动恢复更新前代码。
 - 安全：SMTP 授权码经 `APP_SECRET` 派生密钥加密保存；管理后台使用登录认证；noVNC 和 Chrome 调试端口不直接暴露公网。
 
 平台不会绕过验证码、登录、访问控制或反爬封禁。遇到验证码、访问频率限制或站点拒绝访问时，会停止该站点任务并给出提示。
@@ -96,6 +97,36 @@ sudo systemctl restart tender-platform
 
 ```bash
 curl -k https://127.0.0.1:5555/healthz
+```
+
+## VPS 一键更新
+
+原生 Linux 一键安装的实例可使用下面的命令更新到 GitHub `main` 最新版本：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-management-platform/main/update-linux.sh | sudo bash
+```
+
+脚本会自动完成：
+
+1. 识别 `/opt/data-collection-management-platform` 或旧版 `/opt/tender-collection-platform` 安装目录。
+2. 检查当前分支和本地代码修改；存在未提交修改时停止，避免覆盖定制采集器。
+3. 创建 `pre-update-日期时间.sqlite3` 数据库备份。
+4. 从 GitHub `main` 执行安全的 `git pull --ff-only`。
+5. 更新 Python 依赖、初始化兼容数据库结构并调整迁移包上传限制。
+6. 重启平台和 Nginx，完成健康检查；失败时自动恢复更新前代码。
+
+自定义安装目录可明确指定：
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-management-platform/main/update-linux.sh | sudo env INSTALL_DIR=/opt/你的安装目录 bash
+```
+
+也可进入安装目录运行交互式管理菜单，选择“原生 Linux 更新”：
+
+```bash
+cd /opt/data-collection-management-platform
+sudo bash manage.sh
 ```
 
 数据库备份默认保存在安装目录的 `data/backups/`。可在后台“数据库备份”区域调整备份时间和保留天数。

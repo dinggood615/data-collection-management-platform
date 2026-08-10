@@ -19,7 +19,7 @@ jobs:
         run: python -m compileall app
       - name: Check shell scripts
         run: |
-          for script in install.sh install-linux.sh install-docker.sh install-browser.sh manage.sh uninstall-linux.sh; do
+          for script in install.sh install-linux.sh install-docker.sh install-browser.sh update-linux.sh manage.sh uninstall-linux.sh; do
             bash -n "$script"
           done
       - name: Verify database backup and migration round-trip
