@@ -90,8 +90,8 @@ def dashboard_context() -> dict:
     return {"keywords": keywords, "runs": runs, "results": results, "custom_sites": custom_sites,
             "enabled_site_count": sum(1 for site in custom_sites if site["enabled"]),
             "total_result_count": total_results, "successful_run_count": successful_runs,
-            "schedule": setting("schedule", "08:00"), "recipient": setting("recipient"),
-            "smtp_host": setting("smtp_host", "smtp.163.com"), "smtp_port": setting("smtp_port", "465"),
+            "schedule": setting("schedule"), "recipient": setting("recipient"),
+            "smtp_host": setting("smtp_host"), "smtp_port": setting("smtp_port"),
             "smtp_user": setting("smtp_user"), "smtp_from": setting("smtp_from"),
             "smtp_configured": bool(setting("smtp_auth_code", secret=True)), "admin_username": setting("admin_username", "admin"),
             "custom_site_message": setting("custom_site_message"),
@@ -538,8 +538,18 @@ def run_now():
 
 
 def reschedule() -> None:
-    hour, minute = setting("schedule", "08:00").split(":")
-    scheduler.add_job(run_collection, "cron", hour=int(hour), minute=int(minute), id="daily-run", replace_existing=True)
+    if scheduler.get_job("daily-run"):
+        scheduler.remove_job("daily-run")
+    schedule = setting("schedule").strip()
+    if schedule:
+        try:
+            hour, minute = schedule.split(":")
+            if not (0 <= int(hour) <= 23 and 0 <= int(minute) <= 59):
+                raise ValueError
+        except (TypeError, ValueError):
+            set_setting("custom_site_message", "每日采集时间格式无效，定时采集未启用。")
+        else:
+            scheduler.add_job(run_collection, "cron", hour=int(hour), minute=int(minute), id="daily-run", replace_existing=True)
     backup_hour, backup_minute = setting("backup_schedule", "02:20").split(":")
     scheduler.add_job(run_backup, "cron", hour=int(backup_hour), minute=int(backup_minute), id="daily-backup", replace_existing=True)
 

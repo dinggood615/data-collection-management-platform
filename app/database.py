@@ -84,9 +84,9 @@ def init_db() -> None:
         db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_custom_sites_builtin_code ON custom_sites(builtin_code) WHERE builtin_code IS NOT NULL")
         defaults = (
             ("admin_username", os.getenv("ADMIN_USERNAME", "admin")),
-            ("schedule", "08:00"), ("recipient", os.getenv("SMTP_TO", "")),
-            ("smtp_host", os.getenv("SMTP_HOST", "smtp.163.com")),
-            ("smtp_port", os.getenv("SMTP_PORT", "465")),
+            ("schedule", ""), ("recipient", os.getenv("SMTP_TO", "")),
+            ("smtp_host", os.getenv("SMTP_HOST", "")),
+            ("smtp_port", os.getenv("SMTP_PORT", "")),
             ("smtp_user", os.getenv("SMTP_USER", "")),
             ("smtp_from", os.getenv("SMTP_FROM", "")),
             ("wecom_corp_id", os.getenv("WECOM_CORP_ID", "")),
