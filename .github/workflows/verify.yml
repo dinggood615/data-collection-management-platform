@@ -150,6 +150,19 @@ jobs:
           assert excluded.score < result.score
           assert parse_terms("保洁外包；食堂服务\n保洁外包") == ["保洁外包", "食堂服务"]
           PY
+      - name: Verify external collector plugin interface
+        run: |
+          export COLLECTOR_PLUGIN_DIR="$RUNNER_TEMP/collector-plugins"
+          mkdir -p "$COLLECTOR_PLUGIN_DIR"
+          cat > "$COLLECTOR_PLUGIN_DIR/example.py" <<'PY'
+          def collect(target_date, enabled_codes, keywords, exclusions):
+              return [{"source": "test", "title": "软件开发服务", "url": "https://example.com/1", "published_date": target_date, "notice_type": "test", "matched_terms": ["软件开发"]}], ""
+          PY
+          python - <<'PY'
+          from app.connectors.plugins import collect_plugins
+          items, notices = collect_plugins("2026-08-10", set(), ["软件开发"], [])
+          assert len(items) == 1 and not notices
+          PY
       - name: Verify health endpoint
         run: |
           export DATABASE_PATH="$RUNNER_TEMP/health.sqlite3"
