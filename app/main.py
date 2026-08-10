@@ -417,7 +417,7 @@ def save_wecom_push_settings(webhook: str = Form(""), enabled: str = Form("0")):
         if webhook.strip():
             set_setting("wecom_webhook", _validate_wecom_webhook(webhook), secret=True)
         set_setting("wecom_push_enabled", "0")
-        set_setting("wecom_push_message", "企业微信已设为手动模式。请向企业微信助手发送“推送24小时”。")
+        set_setting("wecom_push_message", "企业微信已设为手动模式。请向企业微信助手发送“24”。")
     except ValueError as exc:
         set_setting("wecom_push_message", str(exc))
     return RedirectResponse("/", 303)
@@ -488,7 +488,7 @@ def run_assistant_command(message: str) -> str:
             latest = db.execute("SELECT status,started_at FROM runs ORDER BY id DESC LIMIT 1").fetchone()
         recent = f"最近任务：{latest['status']}（{latest['started_at']}）" if latest else "尚无运行记录"
         return f"平台在线，已启用采集站点 {enabled} 个。{recent}。"
-    if any(word in text for word in ("推送24小时", "推送", "24小时", "过去24小时")):
+    if text == "24" or any(word in text for word in ("推送24小时", "推送", "24小时", "过去24小时")):
         from .runner import send_wecom_robot_message
 
         report, total = build_recent_24h_report()
@@ -507,7 +507,7 @@ def run_assistant_command(message: str) -> str:
     if any(word in text for word in ("备份", "backup")):
         target = backup_database(int(setting("backup_retention_days", "14")))
         return f"数据库备份已创建：{target.name}。"
-    return "支持的指令：推送24小时、状态、立即采集、最新结果、备份。"
+    return "支持的指令：24、状态、立即采集、最新结果、备份。"
 
 
 @app.post("/wecom/quick-settings")
@@ -571,7 +571,7 @@ async def receive_wecom_message(request: Request):
         decrypted = crypto.decrypt_message(await request.body(), args["msg_signature"], args["timestamp"], args["nonce"])
         message = parse_message(decrypted)
         if getattr(message, "type", "") != "text":
-            reply_text = "仅支持文本指令：推送24小时、状态、立即采集、最新结果、备份。"
+            reply_text = "仅支持文本指令：24、状态、立即采集、最新结果、备份。"
         elif not _wecom_sender_allowed(message.source):
             reply_text = "当前企业微信账号未获授权，请联系平台管理员。"
         else:
