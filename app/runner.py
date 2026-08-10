@@ -12,15 +12,19 @@ from email.message import EmailMessage
 from .connectors.custom import collect_custom_site
 from .database import connect, setting
 from .emailing import normalize_recipients
+from .matching import parse_terms
 
 
 def collect_enabled_sites(target_date: str) -> tuple[int, int, str]:
     with connect() as db:
         keywords = [row["term"] for row in db.execute("SELECT term FROM keywords WHERE enabled=1")]
         custom_sites = [dict(row) for row in db.execute("SELECT * FROM custom_sites WHERE enabled=1")]
+    if not keywords:
+        return 0, 0, "尚未设置核心关键词，本次未访问采集站点"
+    exclusions = parse_terms(setting("exclude_terms"))
     items, notices = [], []
     for site in custom_sites:
-        batch, warning = collect_custom_site(site, target_date, keywords)
+        batch, warning = collect_custom_site(site, target_date, keywords, exclusions)
         items.extend(batch)
         if warning:
             notices.append(warning)
@@ -28,8 +32,8 @@ def collect_enabled_sites(target_date: str) -> tuple[int, int, str]:
     with connect() as db:
         for item in items:
             fingerprint = hashlib.sha256(f"{item['source']}\n{item['title']}\n{item['url']}\n{item['published_date']}".encode()).hexdigest()
-            cursor = db.execute("""INSERT OR IGNORE INTO tenders(fingerprint,source,title,url,published_date,notice_type,matched_terms,first_seen_at)
-                VALUES(?,?,?,?,?,?,?,?)""", (fingerprint, item["source"], item["title"], item["url"], item["published_date"], item["notice_type"], ",".join(item["matched_terms"]), datetime.now().astimezone().isoformat(timespec="seconds")))
+            cursor = db.execute("""INSERT OR IGNORE INTO tenders(fingerprint,source,title,url,published_date,notice_type,matched_terms,first_seen_at,relevance_score,relevance_level,match_reason,excerpt)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""", (fingerprint, item["source"], item["title"], item["url"], item["published_date"], item["notice_type"], ",".join(item["matched_terms"]), datetime.now().astimezone().isoformat(timespec="seconds"), item.get("relevance_score", 0), item.get("relevance_level", ""), item.get("match_reason", ""), item.get("excerpt", "")))
             if cursor.rowcount:
                 new_items.append(item)
     recipient_value = setting("recipient")
@@ -56,7 +60,7 @@ def send_report(recipients: list[str], target_date: str, matched: int, new_items
     msg["To"] = ", ".join(recipients)
     lines = [f"目标日期：{target_date}", f"关键词命中：{matched} 条；新增：{len(new_items)} 条"]
     for item in new_items:
-        lines.extend(("", item["title"], f"来源：{item['source']}；匹配：{','.join(item['matched_terms'])}", item["url"]))
+        lines.extend(("", f"[{item.get('relevance_level', '相关')} {item.get('relevance_score', 0)}分] {item['title']}", f"来源：{item['source']}；匹配：{','.join(item['matched_terms'])}", item.get("match_reason", ""), item["url"]))
     if notices:
         lines.extend(("", "提示：", *notices))
     msg.set_content("\n".join(lines))
@@ -68,7 +72,7 @@ def send_report(recipients: list[str], target_date: str, matched: int, new_items
 def build_wecom_report(target_date: str, matched: int, new_items: list[dict], notices: list[str]) -> str:
     lines = [f"数据采集日报 {target_date}", f"关键词命中：{matched} 条｜新增：{len(new_items)} 条"]
     for item in new_items[:10]:
-        lines.extend(("", item["title"][:120], item["url"]))
+        lines.extend(("", f"[{item.get('relevance_level', '相关')} {item.get('relevance_score', 0)}分] {item['title'][:120]}", item.get("match_reason", ""), item["url"]))
     if len(new_items) > 10:
         lines.append(f"另有 {len(new_items) - 10} 条结果，请登录平台查看。")
     if notices:

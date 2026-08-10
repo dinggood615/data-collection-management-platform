@@ -5,12 +5,18 @@ import asyncio
 import os
 import re
 import socket
+import time
 from urllib.parse import urljoin, urlparse
 
+from bs4 import BeautifulSoup
 from scrapling.fetchers import Fetcher
+
+from ..matching import evaluate_relevance
 
 DATE = re.compile(r"20\d{2}(?:[-./年])\d{1,2}(?:[-./月])\d{1,2}(?:日)?")
 DYNAMIC_MARKERS = ("__NEXT_DATA__", "__NUXT__", "webpackJsonp", "vue", "react", "captcha", "验证码")
+DETAIL_FETCH_LIMIT = max(1, min(int(os.getenv("DETAIL_FETCH_LIMIT", "20")), 50))
+DETAIL_FETCH_DELAY = max(0.2, min(float(os.getenv("DETAIL_FETCH_DELAY", "0.6")), 5.0))
 
 # Scrapling needs adaptive mode and a writable SQLite store before a response
 # is created. This is only for our learned list CSS, never cookies or passwords.
@@ -127,10 +133,45 @@ async def profile_site_from_manual_browser(url: str) -> dict[str, str] | None:
 
 
 def _normalize_date(value: str) -> str:
-    return value.replace("年", "-").replace("月", "-").replace("日", "").replace("/", "-").replace(".", "-")
+    parts = re.findall(r"\d+", value)
+    if len(parts) < 3:
+        return value
+    return f"{int(parts[0]):04d}-{int(parts[1]):02d}-{int(parts[2]):02d}"
 
 
-async def _collect_dynamic_site(site: dict, target_date: str, keywords: list[str]) -> tuple[list[dict], str]:
+def _same_public_host(base_url: str, target_url: str) -> bool:
+    return urlparse(base_url).hostname == urlparse(target_url).hostname and urlparse(target_url).scheme in {"http", "https"}
+
+
+def _result_item(site: dict, title: str, href: str, target_date: str, notice_type: str, body: str, keywords: list[str], exclusions: list[str]) -> dict | None:
+    result = evaluate_relevance(title, body, keywords, exclusions)
+    if result.score < 20:
+        return None
+    excerpt = " ".join(body.split())[:240]
+    return {"source": site["name"], "title": title, "url": href, "published_date": target_date,
+            "notice_type": notice_type, "matched_terms": result.terms, "relevance_score": result.score,
+            "relevance_level": result.level, "match_reason": "；".join(result.reasons), "excerpt": excerpt}
+
+
+def _response_text(response) -> str:
+    for attribute in ("text", "body"):
+        value = getattr(response, attribute, "")
+        if isinstance(value, bytes):
+            return value.decode("utf-8", errors="replace")
+        if isinstance(value, str):
+            return value
+    return ""
+
+
+def _fetch_detail_text(url: str) -> str:
+    response = Fetcher.get(url, timeout=20, impersonate="chrome")
+    soup = BeautifulSoup(_response_text(response), "html.parser")
+    for unwanted in soup.select("script,style,noscript,svg"):
+        unwanted.decompose()
+    return " ".join(soup.get_text(" ", strip=True).split())[:30000]
+
+
+async def _collect_dynamic_site(site: dict, target_date: str, keywords: list[str], exclusions: list[str]) -> tuple[list[dict], str]:
     """Open one temporary tab in the verified browser and always close it again."""
     from playwright.async_api import async_playwright
 
@@ -139,7 +180,8 @@ async def _collect_dynamic_site(site: dict, target_date: str, keywords: list[str
         browser = await playwright.chromium.connect_over_cdp(cdp_url)
         if not browser.contexts:
             return [], f"{site['name']}：未发现已验证的 Chrome 会话，请先进行一次人工验证"
-        page = await browser.contexts[0].new_page()
+        context = browser.contexts[0]
+        page = await context.new_page()
         try:
             await page.goto(site["url"], wait_until="domcontentloaded", timeout=45000)
             await page.wait_for_timeout(1800)
@@ -150,29 +192,41 @@ async def _collect_dynamic_site(site: dict, target_date: str, keywords: list[str
                     context: ((item.closest('tr, li, article, .item, .list-item, .notice-item, .news-item') || item.parentElement || item).innerText || '').replace(/\\s+/g, ' ').trim()
                 }))"""
             )
+            candidates, visited = [], set()
+            for item in entries:
+                title, href = item["title"], item["href"]
+                if len(title) < 8 or href in visited or not _same_public_host(site["url"], href):
+                    continue
+                visited.add(href)
+                date_match = DATE.search(item["context"])
+                if date_match and _normalize_date(date_match.group(0)) == target_date:
+                    candidates.append((title, href, item["context"]))
+            found = []
+            for title, href, context_text in candidates[:DETAIL_FETCH_LIMIT]:
+                detail = await context.new_page()
+                try:
+                    await detail.goto(href, wait_until="domcontentloaded", timeout=30000)
+                    await detail.wait_for_timeout(int(DETAIL_FETCH_DELAY * 1000))
+                    body = await detail.locator("body").inner_text(timeout=10000)
+                except Exception:
+                    body = context_text
+                finally:
+                    await detail.close()
+                result = _result_item(site, title, href, target_date, "人工验证后动态采集", body, keywords, exclusions)
+                if result:
+                    found.append(result)
         finally:
             await page.close()
-    found, visited = [], set()
-    for item in entries:
-        title, href = item["title"], item["href"]
-        if len(title) < 8 or not href.startswith(("http://", "https://")) or href in visited:
-            continue
-        visited.add(href)
-        date_match = DATE.search(item["context"])
-        if not date_match or _normalize_date(date_match.group(0)) != target_date:
-            continue
-        terms = [word for word in keywords if word.casefold() in title.casefold()]
-        if terms:
-            found.append({"source": site["name"], "title": title, "url": href, "published_date": target_date, "notice_type": "人工验证后动态采集", "matched_terms": terms})
     if not found and not entries:
         return [], f"{site['name']}：后台页面未读取到公告链接；若网站显示登录或验证，请进行一次人工验证后再运行"
     return found, ""
 
 
-def collect_custom_site(site: dict, target_date: str, keywords: list[str]) -> tuple[list[dict], str]:
+def collect_custom_site(site: dict, target_date: str, keywords: list[str], exclusions: list[str] | None = None) -> tuple[list[dict], str]:
+    exclusions = exclusions or []
     if site["status"] == "已适配（动态浏览器）":
         try:
-            return asyncio.run(_collect_dynamic_site(site, target_date, keywords))
+            return asyncio.run(_collect_dynamic_site(site, target_date, keywords, exclusions))
         except Exception as exc:
             return [], f"{site['name']}：动态浏览器采集失败：{type(exc).__name__}"
     if site["status"] != "已适配（静态列表）":
@@ -184,19 +238,39 @@ def collect_custom_site(site: dict, target_date: str, keywords: list[str]) -> tu
             links = page.css(selector, adaptive=True)
         except Exception:
             links = page.css(selector)
-        found, visited = [], set()
-        for link in links:
-            title = _text(link)
-            href = urljoin(site["url"], link.attrib.get("href", ""))
-            if not title or not href or href in visited:
+        html = _response_text(page)
+        soup = BeautifulSoup(html, "html.parser")
+        try:
+            elements = soup.select(selector)
+        except Exception:
+            elements = soup.select("a[href]")
+        if not elements:
+            elements = soup.select("a[href]")
+        candidates, visited = [], set()
+        for link in elements:
+            title = " ".join(link.get_text(" ", strip=True).split())
+            href = urljoin(site["url"], link.get("href", ""))
+            if len(title) < 8 or href in visited or not _same_public_host(site["url"], href):
                 continue
             visited.add(href)
-            date_match = DATE.search(title)
+            container = link.find_parent(["tr", "li", "article"]) or link.parent or link
+            context_text = " ".join(container.get_text(" ", strip=True).split())
+            date_match = DATE.search(context_text)
             if not date_match or _normalize_date(date_match.group(0)) != target_date:
                 continue
-            terms = [word for word in keywords if word.casefold() in title.casefold()]
-            if terms:
-                found.append({"source": site["name"], "title": title, "url": href, "published_date": target_date, "notice_type": "自动适配公告", "matched_terms": terms})
+            candidates.append((title, href, context_text))
+        candidates.sort(key=lambda item: any(word.casefold() in item[0].casefold() for word in keywords), reverse=True)
+        found = []
+        for index, (title, href, context_text) in enumerate(candidates[:DETAIL_FETCH_LIMIT]):
+            if index:
+                time.sleep(DETAIL_FETCH_DELAY)
+            try:
+                body = _fetch_detail_text(href)
+            except Exception:
+                body = context_text
+            result = _result_item(site, title, href, target_date, "自动适配公告", body, keywords, exclusions)
+            if result:
+                found.append(result)
         return found, ""
     except Exception as exc:
         return [], f"{site['name']}：{type(exc).__name__}；请重新自动适配或使用人工验证入口"

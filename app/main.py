@@ -18,6 +18,7 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 from .database import backup_database, connect, export_migration_bundle, import_migration_bundle, init_db, now_text, reset_platform_state, set_setting, setting
 from .connectors.custom import profile_site, profile_site_from_manual_browser, validate_public_url, validate_site_name
 from .emailing import normalize_recipients
+from .matching import parse_terms
 
 app = FastAPI(title="数据采集管理平台")
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -93,6 +94,7 @@ def dashboard_context() -> dict:
             "total_result_count": total_results, "successful_run_count": successful_runs,
             "schedule": setting("schedule"), "recipient": setting("recipient"),
             "email_message": setting("email_message"),
+            "exclude_terms": setting("exclude_terms"),
             "smtp_host": setting("smtp_host"), "smtp_port": setting("smtp_port"),
             "smtp_user": setting("smtp_user"), "smtp_from": setting("smtp_from"),
             "smtp_configured": bool(setting("smtp_auth_code", secret=True)), "admin_username": setting("admin_username", "admin"),
@@ -291,6 +293,12 @@ def toggle_keyword(term: str):
     with connect() as db:
         db.execute("UPDATE keywords SET enabled=1-enabled WHERE term=?", (term,))
     return RedirectResponse("/", 303)
+
+
+@app.post("/matching-rules")
+def save_matching_rules(exclude_terms: str = Form("")):
+    set_setting("exclude_terms", ",".join(parse_terms(exclude_terms)))
+    return RedirectResponse("/#delivery", 303)
 
 
 @app.post("/settings")

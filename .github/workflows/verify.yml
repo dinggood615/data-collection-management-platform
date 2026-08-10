@@ -79,7 +79,7 @@ jobs:
           with connect() as db:
               db.execute("INSERT INTO keywords(term) VALUES('测试关键词')")
               db.execute("INSERT INTO custom_sites(name,url,created_at) VALUES('测试站点','https://example.com/notices','now')")
-              db.execute("INSERT INTO tenders VALUES('fp','source','title','https://example.com/1','2026-01-01','公告','测试','now')")
+              db.execute("INSERT INTO tenders(fingerprint,source,title,url,published_date,notice_type,matched_terms,first_seen_at) VALUES('fp','source','title','https://example.com/1','2026-01-01','公告','测试','now')")
               db.execute("INSERT INTO runs(started_at,target_date,status) VALUES('now','2026-01-01','success')")
           set_setting("admin_username", "keeper")
           set_setting("admin_password", "strong-password", secret=True)
@@ -131,6 +131,24 @@ jobs:
               message = server.send_message.call_args.args[0]
               assert server.send_message.call_args.kwargs["to_addrs"] == recipients
               assert str(message["To"]) == "first@example.com, second@example.com"
+          PY
+      - name: Verify relevance scoring and schema migration
+        run: |
+          export DATABASE_PATH="$RUNNER_TEMP/relevance.sqlite3"
+          python - <<'PY'
+          from app.database import connect, init_db
+          from app.matching import evaluate_relevance, expanded_terms, parse_terms
+
+          init_db()
+          with connect() as db:
+              columns = {row["name"] for row in db.execute("PRAGMA table_info(tenders)")}
+          assert {"relevance_score", "relevance_level", "match_reason", "excerpt"} <= columns
+          assert "系统开发" in expanded_terms(["软件开发"])
+          result = evaluate_relevance("业务平台建设服务", "项目包括软件开发与应用实施", ["软件开发"], [])
+          assert result.score >= 20 and result.level in {"高相关", "可能相关"}
+          excluded = evaluate_relevance("软件开发与保洁外包", "", ["软件开发"], ["保洁外包"])
+          assert excluded.score < result.score
+          assert parse_terms("保洁外包；食堂服务\n保洁外包") == ["保洁外包", "食堂服务"]
           PY
       - name: Verify health endpoint
         run: |
