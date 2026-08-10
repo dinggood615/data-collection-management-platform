@@ -10,9 +10,10 @@ from datetime import datetime
 from email.message import EmailMessage
 
 from .connectors.custom import collect_custom_site
+from .connectors.plugins import collect_plugins
 from .database import connect, setting
 from .emailing import normalize_recipients
-from .matching import parse_terms
+from .matching import evaluate_relevance, parse_terms
 
 
 def collect_enabled_sites(target_date: str) -> tuple[int, int, str]:
@@ -28,6 +29,21 @@ def collect_enabled_sites(target_date: str) -> tuple[int, int, str]:
         items.extend(batch)
         if warning:
             notices.append(warning)
+    enabled_codes = {site["builtin_code"] for site in custom_sites if site.get("builtin_code")}
+    plugin_items, plugin_notices = collect_plugins(target_date, enabled_codes, keywords, exclusions)
+    items.extend(plugin_items)
+    notices.extend(plugin_notices)
+    ranked_items = []
+    for item in items:
+        if "relevance_score" not in item:
+            relevance = evaluate_relevance(item["title"], "", keywords, exclusions)
+            if relevance.score < 20:
+                continue
+            item.update(relevance_score=relevance.score, relevance_level=relevance.level,
+                        match_reason="；".join(relevance.reasons), excerpt="")
+            item["matched_terms"] = relevance.terms
+        ranked_items.append(item)
+    items = ranked_items
     new_items = []
     with connect() as db:
         for item in items:
