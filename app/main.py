@@ -15,7 +15,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
-from .database import backup_database, connect, export_migration_bundle, import_migration_bundle, init_db, now_text, set_setting, setting
+from .database import backup_database, connect, export_migration_bundle, import_migration_bundle, init_db, now_text, reset_platform_state, set_setting, setting
 from .connectors.custom import profile_site, profile_site_from_manual_browser, validate_public_url, validate_site_name
 
 app = FastAPI(title="数据采集管理平台")
@@ -122,7 +122,9 @@ def shutdown() -> None:
 
 @app.get("/")
 def home(request: Request):
-    return templates.TemplateResponse(request, "index.html", dashboard_context())
+    context = dashboard_context()
+    context["reset_status"] = request.query_params.get("reset", "")
+    return templates.TemplateResponse(request, "index.html", context)
 
 
 @app.get("/healthz")
@@ -354,6 +356,18 @@ async def upload_migration_bundle(bundle: UploadFile = File(...), confirm_restor
     except Exception as exc:
         set_setting("migration_message", f"导入失败：{type(exc).__name__}")
     return RedirectResponse("/", 303)
+
+
+@app.post("/reset-platform")
+def reset_platform(confirm_reset: str = Form("")):
+    if confirm_reset != "yes":
+        return RedirectResponse("/?reset=confirm#system", 303)
+    try:
+        reset_platform_state()
+        reschedule()
+        return RedirectResponse("/?reset=done#system", 303)
+    except Exception:
+        return RedirectResponse("/?reset=failed#system", 303)
 
 
 def _wecom_callback_url() -> str:

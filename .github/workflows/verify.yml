@@ -60,6 +60,42 @@ jobs:
               assert db.execute("SELECT COUNT(*) FROM keywords WHERE term=?", ("迁移测试",)).fetchone()[0] == 1
           assert setting("smtp_auth_code", secret=True) == "portable-secret"
           PY
+      - name: Verify safe reset to initial state
+        run: |
+          export DATABASE_PATH="$RUNNER_TEMP/reset.sqlite3"
+          export BACKUP_DIR="$RUNNER_TEMP/reset-backups"
+          export APP_SECRET="ci-reset-secret"
+          python - <<'PY'
+          import sqlite3
+          from app.database import connect, init_db, reset_platform_state, set_setting, setting
+          init_db()
+          with connect() as db:
+              db.execute("INSERT INTO keywords(term) VALUES('测试关键词')")
+              db.execute("INSERT INTO custom_sites(name,url,created_at) VALUES('测试站点','https://example.com/notices','now')")
+              db.execute("INSERT INTO tenders VALUES('fp','source','title','https://example.com/1','2026-01-01','公告','测试','now')")
+              db.execute("INSERT INTO runs(started_at,target_date,status) VALUES('now','2026-01-01','success')")
+          set_setting("admin_username", "keeper")
+          set_setting("admin_password", "strong-password", secret=True)
+          set_setting("backup_schedule", "03:10")
+          set_setting("backup_retention_days", "30")
+          set_setting("schedule", "08:00")
+          set_setting("smtp_auth_code", "mail-secret", secret=True)
+          set_setting("wecom_webhook", "webhook-secret", secret=True)
+          rollback = reset_platform_state()
+          assert rollback.exists()
+          with sqlite3.connect(rollback) as backup:
+              assert backup.execute("SELECT COUNT(*) FROM tenders").fetchone()[0] == 1
+          with connect() as db:
+              for table in ("custom_sites", "keywords", "tenders", "runs"):
+                  assert db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0
+          assert setting("admin_username") == "keeper"
+          assert setting("admin_password", secret=True) == "strong-password"
+          assert setting("backup_schedule") == "03:10"
+          assert setting("backup_retention_days") == "30"
+          assert setting("schedule") == ""
+          assert setting("smtp_auth_code", secret=True) == ""
+          assert setting("wecom_webhook", secret=True) == ""
+          PY
       - name: Verify dashboard template
         run: python -c "from jinja2 import Environment, FileSystemLoader; Environment(loader=FileSystemLoader('app/templates')).get_template('index.html')"
       - name: Verify health endpoint
