@@ -82,6 +82,15 @@ def init_db() -> None:
         if "builtin_code" not in columns:
             db.execute("ALTER TABLE custom_sites ADD COLUMN builtin_code TEXT")
         db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_custom_sites_builtin_code ON custom_sites(builtin_code) WHERE builtin_code IS NOT NULL")
+        tender_columns = {row["name"] for row in db.execute("PRAGMA table_info(tenders)")}
+        for column, declaration in (
+            ("relevance_score", "INTEGER NOT NULL DEFAULT 0"),
+            ("relevance_level", "TEXT NOT NULL DEFAULT ''"),
+            ("match_reason", "TEXT NOT NULL DEFAULT ''"),
+            ("excerpt", "TEXT NOT NULL DEFAULT ''"),
+        ):
+            if column not in tender_columns:
+                db.execute(f"ALTER TABLE tenders ADD COLUMN {column} {declaration}")
         defaults = (
             ("admin_username", os.getenv("ADMIN_USERNAME", "admin")),
             ("schedule", ""), ("recipient", os.getenv("SMTP_TO", "")),
@@ -97,6 +106,7 @@ def init_db() -> None:
             ("wecom_webhook", os.getenv("WECOM_WEBHOOK", "")),
             ("wecom_push_enabled", os.getenv("WECOM_PUSH_ENABLED", "0")),
             ("wecom_push_message", ""),
+            ("exclude_terms", ""),
         )
         for key, value in defaults:
             db.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (key, value))
