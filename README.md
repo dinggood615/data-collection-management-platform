@@ -42,6 +42,8 @@
 
 支持使用 `systemd` 的 Ubuntu、Debian、RHEL、Rocky Linux、AlmaLinux、CentOS Stream、Fedora、openSUSE 和 Arch Linux。脚本会安装 Python、浏览器运行环境、Nginx、Chrome/Chromium、Xvfb 与 noVNC。
 
+安装器会等待最多 60 秒让应用启动。等待期间不会显示误导性的临时连接错误；只有服务真正失败或超时才会输出 systemd 状态与最近日志。后端和 HTTPS 入口均通过健康检查后才会显示“安装完成”。
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-management-platform/main/install-linux.sh | sudo bash -s -- https://github.com/dinggood615/data-collection-management-platform.git
 ```
