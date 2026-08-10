@@ -16,7 +16,7 @@ from .emailing import normalize_recipients
 from .matching import evaluate_relevance, parse_terms
 
 
-def collect_enabled_sites(target_date: str) -> tuple[int, int, str]:
+def collect_enabled_sites(target_date: str, send_email: bool = True) -> tuple[int, int, str]:
     with connect() as db:
         keywords = [row["term"] for row in db.execute("SELECT term FROM keywords WHERE enabled=1")]
         custom_sites = [dict(row) for row in db.execute("SELECT * FROM custom_sites WHERE enabled=1")]
@@ -52,30 +52,30 @@ def collect_enabled_sites(target_date: str) -> tuple[int, int, str]:
                 VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""", (fingerprint, item["source"], item["title"], item["url"], item["published_date"], item["notice_type"], ",".join(item["matched_terms"]), datetime.now().astimezone().isoformat(timespec="seconds"), item.get("relevance_score", 0), item.get("relevance_level", ""), item.get("match_reason", ""), item.get("excerpt", "")))
             if cursor.rowcount:
                 new_items.append(item)
+        report_items = [dict(row) for row in db.execute(
+            "SELECT * FROM tenders WHERE published_date=? ORDER BY relevance_score DESC, first_seen_at DESC",
+            (target_date,),
+        ).fetchall()]
+    for item in report_items:
+        item["matched_terms"] = [term for term in item["matched_terms"].split(",") if term]
     recipient_value = setting("recipient")
     smtp = {"host": setting("smtp_host", os.getenv("SMTP_HOST", "smtp.163.com")), "port": setting("smtp_port", os.getenv("SMTP_PORT", "465")), "user": setting("smtp_user", os.getenv("SMTP_USER", "")), "from": setting("smtp_from", os.getenv("SMTP_FROM", "")), "auth_code": setting("smtp_auth_code", os.getenv("SMTP_AUTH_CODE", ""), secret=True)}
-    if recipient_value and smtp["user"] and smtp["auth_code"]:
+    if send_email and recipient_value and smtp["user"] and smtp["auth_code"]:
         try:
             recipients = normalize_recipients(recipient_value)
-            send_report(recipients, target_date, len(items), new_items, notices, smtp)
+            send_report(recipients, target_date, report_items, notices, smtp)
         except ValueError:
             notices.append("收件邮箱配置无效，请在邮件与定时中重新保存。")
-    webhook = setting("wecom_webhook", secret=True)
-    if setting("wecom_push_enabled", "0") == "1" and webhook:
-        try:
-            send_wecom_robot_message(webhook, build_wecom_report(target_date, len(items), new_items, notices))
-        except Exception as exc:
-            notices.append(f"企业微信推送失败：{type(exc).__name__}")
     return len(items), len(new_items), "; ".join(notices) or "采集完成"
 
 
-def send_report(recipients: list[str], target_date: str, matched: int, new_items: list[dict], notices: list[str], smtp_config: dict[str, str]) -> None:
+def send_report(recipients: list[str], target_date: str, report_items: list[dict], notices: list[str], smtp_config: dict[str, str]) -> None:
     msg = EmailMessage()
-    msg["Subject"] = f"招标采集日报 {target_date}（新增 {len(new_items)} 条）"
+    msg["Subject"] = f"招标采集日报 {target_date}（共 {len(report_items)} 条）"
     msg["From"] = smtp_config["from"] or smtp_config["user"]
     msg["To"] = ", ".join(recipients)
-    lines = [f"目标日期：{target_date}", f"关键词命中：{matched} 条；新增：{len(new_items)} 条"]
-    for item in new_items:
+    lines = [f"目标日期：{target_date}", f"前一自然日命中结果：{len(report_items)} 条"]
+    for item in report_items:
         lines.extend(("", f"[{item.get('relevance_level', '相关')} {item.get('relevance_score', 0)}分] {item['title']}", f"来源：{item['source']}；匹配：{','.join(item['matched_terms'])}", item.get("match_reason", ""), item["url"]))
     if notices:
         lines.extend(("", "提示：", *notices))
