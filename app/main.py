@@ -4,7 +4,7 @@ import base64
 import asyncio
 import os
 import secrets
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta
 from urllib.parse import urlparse
 
 from apscheduler.schedulers.background import BackgroundScheduler
@@ -416,8 +416,8 @@ def save_wecom_push_settings(webhook: str = Form(""), enabled: str = Form("0")):
     try:
         if webhook.strip():
             set_setting("wecom_webhook", _validate_wecom_webhook(webhook), secret=True)
-        set_setting("wecom_push_enabled", "1" if enabled == "1" else "0")
-        set_setting("wecom_push_message", "企业微信推送设置已保存。")
+        set_setting("wecom_push_enabled", "0")
+        set_setting("wecom_push_message", "企业微信已设为手动模式。请向企业微信助手发送“推送24小时”。")
     except ValueError as exc:
         set_setting("wecom_push_message", str(exc))
     return RedirectResponse("/", 303)
@@ -460,6 +460,25 @@ def _wecom_sender_allowed(user_id: str) -> bool:
     return bool(allowed) and user_id in allowed
 
 
+def build_recent_24h_report(limit: int = 12) -> tuple[str, int]:
+    cutoff = (datetime.now().astimezone() - timedelta(hours=24)).isoformat(timespec="seconds")
+    with connect() as db:
+        total = db.execute("SELECT COUNT(*) FROM tenders WHERE first_seen_at>=?", (cutoff,)).fetchone()[0]
+        rows = db.execute(
+            "SELECT title,url,source,relevance_score,relevance_level FROM tenders WHERE first_seen_at>=? ORDER BY relevance_score DESC,first_seen_at DESC LIMIT ?",
+            (cutoff, max(1, min(limit, 30))),
+        ).fetchall()
+    lines = ["数据采集平台｜最近24小时", f"共入库 {total} 条相关信息。"]
+    for row in rows:
+        level = row["relevance_level"] or "相关"
+        lines.extend(("", f"[{level} {row['relevance_score']}分] {row['title'][:100]}", f"来源：{row['source']}", row["url"]))
+    if total > len(rows):
+        lines.extend(("", f"另有 {total - len(rows)} 条，请登录平台查看。"))
+    if not rows:
+        lines.append("最近24小时暂无新入库结果。")
+    return "\n".join(lines), total
+
+
 def run_assistant_command(message: str) -> str:
     """A small allow-list of safe platform operations for chat assistants."""
     text = message.strip().lower()
@@ -469,9 +488,18 @@ def run_assistant_command(message: str) -> str:
             latest = db.execute("SELECT status,started_at FROM runs ORDER BY id DESC LIMIT 1").fetchone()
         recent = f"最近任务：{latest['status']}（{latest['started_at']}）" if latest else "尚无运行记录"
         return f"平台在线，已启用采集站点 {enabled} 个。{recent}。"
+    if any(word in text for word in ("推送24小时", "推送", "24小时", "过去24小时")):
+        from .runner import send_wecom_robot_message
+
+        report, total = build_recent_24h_report()
+        webhook = setting("wecom_webhook", secret=True)
+        if webhook:
+            send_wecom_robot_message(webhook, report)
+            return f"已手动推送最近24小时数据，共 {total} 条。"
+        return report[:1800]
     if any(word in text for word in ("采集", "抓取", "collect")):
-        scheduler.add_job(run_collection, id="manual-run", replace_existing=True)
-        return "已提交一次采集任务，请稍后在平台“最近运行”查看结果。"
+        scheduler.add_job(run_collection, args=[False], id="manual-run", replace_existing=True)
+        return "已提交一次手动采集任务；结果会入库但不会发送邮件，请稍后查看“最近运行”。"
     if any(word in text for word in ("最新", "结果", "latest")):
         with connect() as db:
             rows = db.execute("SELECT title FROM tenders ORDER BY first_seen_at DESC LIMIT 3").fetchall()
@@ -479,7 +507,7 @@ def run_assistant_command(message: str) -> str:
     if any(word in text for word in ("备份", "backup")):
         target = backup_database(int(setting("backup_retention_days", "14")))
         return f"数据库备份已创建：{target.name}。"
-    return "支持的指令：状态、立即采集、最新结果、备份。"
+    return "支持的指令：推送24小时、状态、立即采集、最新结果、备份。"
 
 
 @app.post("/wecom/quick-settings")
@@ -543,7 +571,7 @@ async def receive_wecom_message(request: Request):
         decrypted = crypto.decrypt_message(await request.body(), args["msg_signature"], args["timestamp"], args["nonce"])
         message = parse_message(decrypted)
         if getattr(message, "type", "") != "text":
-            reply_text = "仅支持文本指令：状态、立即采集、最新结果、备份。"
+            reply_text = "仅支持文本指令：推送24小时、状态、立即采集、最新结果、备份。"
         elif not _wecom_sender_allowed(message.source):
             reply_text = "当前企业微信账号未获授权，请联系平台管理员。"
         else:
@@ -554,7 +582,7 @@ async def receive_wecom_message(request: Request):
         return PlainTextResponse("invalid callback", 403)
 
 
-def run_collection() -> None:
+def run_collection(send_email: bool = True) -> None:
     # Connector execution is deliberately isolated here. The production collector
     # uses only enabled site adapters and never attempts CAPTCHA/anti-bot bypass.
     target = (date.today() - timedelta(days=1)).isoformat()
@@ -563,7 +591,7 @@ def run_collection() -> None:
         run_id = cursor.lastrowid
     try:
         from .runner import collect_enabled_sites
-        matched, new_count, message = collect_enabled_sites(target)
+        matched, new_count, message = collect_enabled_sites(target, send_email=send_email)
         status = "success"
     except Exception as exc:
         matched, new_count, status, message = 0, 0, "failed", f"{type(exc).__name__}: {exc}"
@@ -573,7 +601,7 @@ def run_collection() -> None:
 
 @app.post("/run")
 def run_now():
-    scheduler.add_job(run_collection, id="manual-run", replace_existing=True)
+    scheduler.add_job(run_collection, args=[False], id="manual-run", replace_existing=True)
     return RedirectResponse("/", 303)
 
 
