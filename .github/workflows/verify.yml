@@ -22,15 +22,29 @@ jobs:
           for script in install.sh install-linux.sh install-docker.sh install-browser.sh manage.sh uninstall-linux.sh; do
             bash -n "$script"
           done
-      - name: Verify database initialization and backup
+      - name: Verify database backup and migration round-trip
         run: |
           export DATABASE_PATH="$RUNNER_TEMP/platform.sqlite3"
           export BACKUP_DIR="$RUNNER_TEMP/backups"
+          export APP_SECRET="ci-migration-secret"
           python - <<'PY'
-          from app.database import backup_database, init_db
+          from app.database import backup_database, connect, export_migration_bundle, import_migration_bundle, init_db, set_setting, setting
           init_db()
           assert backup_database(14).exists()
+          with connect() as db:
+              db.execute("INSERT INTO keywords(term) VALUES(?)", ("迁移测试",))
+          set_setting("smtp_auth_code", "portable-secret", secret=True)
+          bundle = export_migration_bundle()
+          with connect() as db:
+              db.execute("DELETE FROM keywords")
+          set_setting("smtp_auth_code", "changed", secret=True)
+          import_migration_bundle(bundle)
+          with connect() as db:
+              assert db.execute("SELECT COUNT(*) FROM keywords WHERE term=?", ("迁移测试",)).fetchone()[0] == 1
+          assert setting("smtp_auth_code", secret=True) == "portable-secret"
           PY
+      - name: Verify dashboard template
+        run: python -c "from jinja2 import Environment, FileSystemLoader; Environment(loader=FileSystemLoader('app/templates')).get_template('index.html')"
       - name: Verify health endpoint
         run: |
           export DATABASE_PATH="$RUNNER_TEMP/health.sqlite3"

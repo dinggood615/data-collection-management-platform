@@ -4,11 +4,26 @@ import os
 import sqlite3
 import base64
 import hashlib
+import io
+import json
+import tempfile
+import zipfile
 from pathlib import Path
 from contextlib import contextmanager
 from datetime import datetime
 
 from cryptography.fernet import Fernet, InvalidToken
+
+
+MIGRATION_SECRET_KEYS = (
+    "admin_password",
+    "smtp_auth_code",
+    "wecom_corp_id",
+    "wecom_callback_token",
+    "wecom_encoding_aes_key",
+    "wecom_webhook",
+)
+MIGRATION_MAX_BYTES = 100 * 1024 * 1024
 
 
 
@@ -106,6 +121,81 @@ def backup_database(retention_days: int) -> Path:
         if candidate != target and candidate.stat().st_mtime < cutoff:
             candidate.unlink(missing_ok=True)
     return target
+
+
+def export_migration_bundle() -> bytes:
+    """Export a portable database plus secrets re-encrypted on the target host."""
+    with tempfile.TemporaryDirectory(prefix="platform-export-") as temporary:
+        snapshot = Path(temporary) / "platform.sqlite3"
+        source = sqlite3.connect(db_path(), timeout=20)
+        destination = sqlite3.connect(snapshot)
+        try:
+            source.backup(destination)
+        finally:
+            destination.close()
+            source.close()
+        manifest = {
+            "format": "data-collection-platform-backup",
+            "version": 1,
+            "created_at": now_text(),
+            "contains": ["settings", "sites", "keywords", "results", "runs"],
+        }
+        secrets = {key: setting(key, secret=True) for key in MIGRATION_SECRET_KEYS if setting(key, secret=True)}
+        output = io.BytesIO()
+        with zipfile.ZipFile(output, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+            archive.write(snapshot, "platform.sqlite3")
+            archive.writestr("manifest.json", json.dumps(manifest, ensure_ascii=False, indent=2))
+            archive.writestr("secrets.json", json.dumps(secrets, ensure_ascii=False))
+        return output.getvalue()
+
+
+def import_migration_bundle(payload: bytes) -> Path:
+    """Validate and restore a portable bundle, keeping a rollback backup first."""
+    if not payload or len(payload) > MIGRATION_MAX_BYTES:
+        raise ValueError("备份文件为空或超过 100 MB。")
+    try:
+        archive = zipfile.ZipFile(io.BytesIO(payload))
+    except zipfile.BadZipFile as exc:
+        raise ValueError("备份文件格式无效。") from exc
+    with archive:
+        names = set(archive.namelist())
+        if names != {"platform.sqlite3", "manifest.json", "secrets.json"}:
+            raise ValueError("备份文件内容不完整或包含未知文件。")
+        if sum(item.file_size for item in archive.infolist()) > MIGRATION_MAX_BYTES:
+            raise ValueError("备份解压后的内容超过 100 MB。")
+        manifest = json.loads(archive.read("manifest.json"))
+        if manifest.get("format") != "data-collection-platform-backup" or manifest.get("version") != 1:
+            raise ValueError("备份版本不受支持。")
+        secrets = json.loads(archive.read("secrets.json"))
+        if not isinstance(secrets, dict) or any(key not in MIGRATION_SECRET_KEYS for key in secrets):
+            raise ValueError("备份中的敏感配置无效。")
+        database_bytes = archive.read("platform.sqlite3")
+    rollback = backup_database(int(setting("backup_retention_days", "14")))
+    with tempfile.NamedTemporaryFile(prefix="platform-import-", suffix=".sqlite3", delete=False) as temporary:
+        temporary.write(database_bytes)
+        source_path = Path(temporary.name)
+    try:
+        source = sqlite3.connect(source_path)
+        try:
+            quick_check = source.execute("PRAGMA quick_check").fetchone()
+            tables = {row[0] for row in source.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+            required = {"settings", "custom_sites", "keywords", "tenders", "runs"}
+            if not quick_check or quick_check[0] != "ok" or not required.issubset(tables):
+                raise ValueError("备份数据库校验失败。")
+            destination = sqlite3.connect(db_path(), timeout=30)
+            try:
+                source.backup(destination)
+            finally:
+                destination.close()
+        finally:
+            source.close()
+        init_db()
+        for key, value in secrets.items():
+            set_setting(key, str(value), secret=True)
+        set_setting("backup_message", f"已导入配置；导入前备份：{rollback.name}")
+        return rollback
+    finally:
+        source_path.unlink(missing_ok=True)
 
 
 def _cipher() -> Fernet:
