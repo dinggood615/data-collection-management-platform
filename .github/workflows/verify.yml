@@ -163,6 +163,26 @@ jobs:
           items, notices = collect_plugins("2026-08-10", set(), ["软件开发"], [])
           assert len(items) == 1 and not notices
           PY
+      - name: Verify dedicated sites bypass generic collector
+        run: |
+          export DATABASE_PATH="$RUNNER_TEMP/dedicated-routing.sqlite3"
+          python - <<'PY'
+          from unittest.mock import patch
+          from app.database import connect, init_db
+          from app.runner import collect_enabled_sites
+
+          init_db()
+          with connect() as db:
+              db.execute("INSERT INTO keywords(term) VALUES('软件开发')")
+              db.execute("INSERT INTO custom_sites(name,url,enabled,status,builtin_code,created_at) VALUES('专用站点','https://example.com/dedicated',1,'已适配（专用采集器）','dedicated','now')")
+              db.execute("INSERT INTO custom_sites(name,url,enabled,status,created_at) VALUES('通用站点','https://example.com/list',1,'已适配（静态列表）','now')")
+          with patch("app.runner.collect_custom_site", return_value=([], "")) as generic, \
+               patch("app.runner.collect_plugins", return_value=([], [])) as plugins:
+              collect_enabled_sites("2026-08-09")
+          assert generic.call_count == 1
+          assert generic.call_args.args[0]["builtin_code"] is None
+          assert plugins.call_args.args[1] == {"dedicated"}
+          PY
       - name: Verify health endpoint
         run: |
           export DATABASE_PATH="$RUNNER_TEMP/health.sqlite3"
