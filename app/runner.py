@@ -24,7 +24,7 @@ def collect_enabled_sites(target_date: str) -> tuple[int, int, str]:
         return 0, 0, "尚未设置核心关键词，本次未访问采集站点"
     exclusions = parse_terms(setting("exclude_terms"))
     items, notices = [], []
-    for site in custom_sites:
+    for site in (item for item in custom_sites if not item.get("builtin_code")):
         batch, warning = collect_custom_site(site, target_date, keywords, exclusions)
         items.extend(batch)
         if warning:

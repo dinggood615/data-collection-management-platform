@@ -72,6 +72,13 @@ def dashboard_context() -> dict:
         total_results = db.execute("SELECT COUNT(*) FROM tenders").fetchone()[0]
         successful_runs = db.execute("SELECT COUNT(*) FROM runs WHERE status='success'").fetchone()[0]
     for site in custom_sites:
+        if site.get("builtin_code"):
+            site["status"] = "已适配（专用采集器）"
+            site["engine"] = "外部专用采集器"
+            site["profile_note"] = "系统已自动识别并交由服务器专用采集器处理，无需重新识别或人工确认。"
+            site["next_step"] = "保持启用即可。定时任务会自动采集、筛选、评分和推送，无需人工操作。"
+            site["entry_invalid"] = False
+            continue
         try:
             validate_site_name(site["name"])
             validate_public_url(site["url"])
