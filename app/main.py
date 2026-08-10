@@ -592,6 +592,16 @@ def run_collection(send_email: bool = True) -> None:
     try:
         from .runner import collect_enabled_sites
         matched, new_count, message = collect_enabled_sites(target, send_email=send_email)
+        recovered = 0
+        recheck_days = max(1, min(int(os.getenv("RECHECK_DAYS", "3")), 7))
+        for days_ago in range(2, recheck_days + 1):
+            historical_date = (date.today() - timedelta(days=days_ago)).isoformat()
+            _, historical_new, historical_message = collect_enabled_sites(historical_date, send_email=False)
+            recovered += historical_new
+            if historical_message != "采集完成":
+                message += f"；回查 {historical_date}：{historical_message}"
+        if recovered:
+            message += f"；最近 {recheck_days} 天回查补录 {recovered} 条"
         status = "success"
     except Exception as exc:
         matched, new_count, status, message = 0, 0, "failed", f"{type(exc).__name__}: {exc}"

@@ -47,10 +47,22 @@ def collect_enabled_sites(target_date: str, send_email: bool = True) -> tuple[in
     new_items = []
     with connect() as db:
         for item in items:
-            fingerprint = hashlib.sha256(f"{item['source']}\n{item['title']}\n{item['url']}\n{item['published_date']}".encode()).hexdigest()
-            cursor = db.execute("""INSERT OR IGNORE INTO tenders(fingerprint,source,title,url,published_date,notice_type,matched_terms,first_seen_at,relevance_score,relevance_level,match_reason,excerpt)
-                VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""", (fingerprint, item["source"], item["title"], item["url"], item["published_date"], item["notice_type"], ",".join(item["matched_terms"]), datetime.now().astimezone().isoformat(timespec="seconds"), item.get("relevance_score", 0), item.get("relevance_level", ""), item.get("match_reason", ""), item.get("excerpt", "")))
-            if cursor.rowcount:
+            source_item_id = item.get("source_item_id", "")
+            identity = source_item_id or f"{item['title']}\n{item['url']}\n{item['published_date']}"
+            fingerprint = hashlib.sha256(f"{item['source']}\n{identity}".encode()).hexdigest()
+            revision_hash = hashlib.sha256(f"{item['title']}\n{item.get('excerpt', '')}\n{item['published_date']}".encode()).hexdigest()
+            now = datetime.now().astimezone().isoformat(timespec="seconds")
+            existed = db.execute("SELECT 1 FROM tenders WHERE fingerprint=?", (fingerprint,)).fetchone() is not None
+            db.execute("""INSERT INTO tenders(fingerprint,source,title,url,published_date,notice_type,matched_terms,first_seen_at,relevance_score,relevance_level,match_reason,excerpt,source_item_id,last_seen_at,revision_hash)
+                VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(fingerprint) DO UPDATE SET title=excluded.title,url=excluded.url,published_date=excluded.published_date,
+                notice_type=excluded.notice_type,matched_terms=excluded.matched_terms,relevance_score=excluded.relevance_score,
+                relevance_level=excluded.relevance_level,match_reason=excluded.match_reason,excerpt=excluded.excerpt,
+                source_item_id=excluded.source_item_id,last_seen_at=excluded.last_seen_at,revision_hash=excluded.revision_hash""",
+                (fingerprint, item["source"], item["title"], item["url"], item["published_date"], item["notice_type"],
+                 ",".join(item["matched_terms"]), now, item.get("relevance_score", 0), item.get("relevance_level", ""),
+                 item.get("match_reason", ""), item.get("excerpt", ""), source_item_id, now, revision_hash))
+            if not existed:
                 new_items.append(item)
         report_items = [dict(row) for row in db.execute(
             "SELECT * FROM tenders WHERE published_date=? ORDER BY relevance_score DESC, first_seen_at DESC",

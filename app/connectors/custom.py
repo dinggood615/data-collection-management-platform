@@ -298,14 +298,16 @@ def _same_public_host(base_url: str, target_url: str) -> bool:
     return urlparse(base_url).hostname == urlparse(target_url).hostname and urlparse(target_url).scheme in {"http", "https"}
 
 
-def _result_item(site: dict, title: str, href: str, target_date: str, notice_type: str, body: str, keywords: list[str], exclusions: list[str]) -> dict | None:
+def _result_item(site: dict, title: str, href: str, target_date: str, notice_type: str, body: str,
+                 keywords: list[str], exclusions: list[str], source_item_id: str = "") -> dict | None:
     result = evaluate_relevance(title, body, keywords, exclusions)
     if result.score < 20:
         return None
     excerpt = " ".join(body.split())[:240]
     return {"source": site["name"], "title": title, "url": href, "published_date": target_date,
             "notice_type": notice_type, "matched_terms": result.terms, "relevance_score": result.score,
-            "relevance_level": result.level, "match_reason": "；".join(result.reasons), "excerpt": excerpt}
+            "relevance_level": result.level, "match_reason": "；".join(result.reasons), "excerpt": excerpt,
+            "source_item_id": source_item_id}
 
 
 def _response_text(response) -> str:
@@ -405,6 +407,39 @@ def _public_detail_url(site_url: str, record: dict, feed: dict) -> str:
             f"&date={quote(str(record.get(feed['date_field'], '')), safe='')}")
 
 
+def _public_detail_text(site_url: str, record: dict, feed: dict) -> str:
+    """Read only detail endpoints that are demonstrably public.
+
+    Jiangsu Guoxin's direct-purchase publicity endpoint is public. Inquiry
+    details currently return 401 and are deliberately not accessed further.
+    """
+    if urlparse(site_url).hostname != "ec.jsgx.net" or record.get("businessType") != "RP_PLANNING":
+        return ""
+    publicity_id = record.get("businessCode")
+    if not publicity_id:
+        return ""
+    endpoint = f"https://ec.jsgx.net/api-purchase/publicity/supp/get?{urlencode({'publicityId': publicity_id})}"
+    payload = _fetch_public_json(endpoint, site_url)
+    if not isinstance(payload, dict) or payload.get("code") != 200 or not isinstance(payload.get("data"), dict):
+        return ""
+    values: list[str] = []
+
+    def walk(value) -> None:
+        if isinstance(value, dict):
+            for child in value.values():
+                walk(child)
+        elif isinstance(value, list):
+            for child in value[:100]:
+                walk(child)
+        elif isinstance(value, (str, int, float)):
+            text = " ".join(str(value).split())
+            if text and text not in values:
+                values.append(text)
+
+    walk(payload["data"])
+    return " ".join(values)[:30000]
+
+
 def _collect_public_api(site: dict, target_date: str, keywords: list[str], exclusions: list[str]) -> tuple[list[dict], str]:
     try:
         profile = json.loads(site.get("profile_json") or "{}")
@@ -447,8 +482,15 @@ def _collect_public_api(site: dict, target_date: str, keywords: list[str], exclu
                     visited.add(unique_key)
                     notice_type = feed.get("label") or str(record.get(feed.get("type_field", ""), "公开公告")) or "公开公告"
                     body = " ".join(str(value) for value in record.values() if value is not None)
+                    try:
+                        detail_body = _public_detail_text(site["url"], record, feed)
+                        if detail_body:
+                            body = f"{body} {detail_body}"
+                            time.sleep(DETAIL_FETCH_DELAY)
+                    except Exception:
+                        pass
                     result = _result_item(site, title, _public_detail_url(site["url"], record, feed), target_date,
-                                          notice_type, body, keywords, exclusions)
+                                          notice_type, body, keywords, exclusions, source_item_id=identity)
                     if result:
                         found.append(result)
                 if not feed.get("page_param") or len(records) < int(base_query.get(feed.get("size_param", ""), 50)):
