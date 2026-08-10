@@ -212,6 +212,10 @@ jobs:
               send_report.assert_not_called()
           report, total = build_recent_24h_report()
           assert total == 1 and "软件开发服务" in report
+          from app.main import run_assistant_command
+          with patch("app.runner.send_wecom_robot_message"):
+              response = run_assistant_command("24")
+              assert "24" in response or "已手动推送" in response
           PY
       - name: Verify health endpoint
         run: |
