@@ -7,7 +7,7 @@ import os
 import re
 import socket
 import time
-from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
+from urllib.parse import parse_qsl, quote, urlencode, urljoin, urlparse, urlunparse
 from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup
@@ -19,7 +19,7 @@ DATE = re.compile(r"20\d{2}(?:[-./年])\d{1,2}(?:[-./月])\d{1,2}(?:日)?")
 DYNAMIC_MARKERS = ("__NEXT_DATA__", "__NUXT__", "webpackJsonp", "vue", "react", "captcha", "验证码")
 DETAIL_FETCH_LIMIT = max(1, min(int(os.getenv("DETAIL_FETCH_LIMIT", "20")), 50))
 DETAIL_FETCH_DELAY = max(0.2, min(float(os.getenv("DETAIL_FETCH_DELAY", "0.6")), 5.0))
-API_PAGE_LIMIT = max(1, min(int(os.getenv("API_PAGE_LIMIT", "10")), 30))
+API_PAGE_LIMIT = max(1, min(int(os.getenv("API_PAGE_LIMIT", "30")), 100))
 TITLE_KEYS = ("datatitle", "title", "subject", "noticetitle", "projectname", "name")
 DATE_KEYS = ("releasetimestr", "releasedate", "publishtime", "publishdate", "createdate", "date", "time")
 TYPE_KEYS = ("codemodename", "noticetype", "businessname", "categoryname", "type")
@@ -163,6 +163,46 @@ def infer_api_profile(response_url: str, payload, site_url: str) -> dict | None:
             "page_param": page_param, "size_param": size_param, "sample_count": len(records)}
 
 
+def _jsgx_feed_profiles(profile: dict, site_url: str) -> list[dict]:
+    """Expand Jiangsu Guoxin's public portal into all relevant announcement feeds.
+
+    The portal exposes these tabs through the same public, date-filterable GET
+    endpoint. Keeping the mapping here avoids relying on visible tab labels or
+    clicks, both of which are fragile in its Vue interface.
+    """
+    parsed = urlparse(profile.get("endpoint", ""))
+    if urlparse(site_url).hostname != "ec.jsgx.net" or parsed.path != "/api-base/purchaseInfomation/list":
+        return [profile]
+    categories = (
+        ("招标公告", "MBID_ANNOUNCEMENT,MBID_ANNOUNCEMENT_SELF", "-1", "public"),
+        ("公开询比采购", "IQ_INQUIRY,IQ_INQUIRY_SELF", "12", "purchase"),
+        ("公开谈判采购", "IQ_INQUIRY_COMPETE,IQ_INQUIRY_COMPETE_SELF", "18", "purchase"),
+        ("直接采购公示", "RP_PLANNING,RP_PLANNING_SELF", "17", "public"),
+    )
+    feeds = []
+    for label, business_types, code_mode, detail_mode in categories:
+        query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+        query.update(businessTypeArr=business_types, codeMode=code_mode, pageNum="1", pageSize="50",
+                     custCode=query.get("custCode", "10000000"), searchContent="")
+        query.pop("t", None)
+        feed = dict(profile)
+        feed.update(label=label, endpoint=urlunparse(parsed._replace(query=urlencode(query))),
+                    page_param="pageNum", size_param="pageSize", start_date_param="releaseTimeStart",
+                    end_date_param="releaseTimeEnd", detail_mode=detail_mode)
+        feeds.append(feed)
+    return feeds
+
+
+def expand_api_profile(profile: dict, site_url: str) -> dict:
+    feeds = _jsgx_feed_profiles(profile, site_url)
+    if len(feeds) == 1:
+        return profile
+    expanded = dict(profile)
+    expanded["feeds"] = feeds
+    expanded["feed_count"] = len(feeds)
+    return expanded
+
+
 def _records_at_path(payload, path: str) -> list[dict]:
     value = payload
     for part in path.removeprefix("$.").split(".") if path != "$" else []:
@@ -226,9 +266,10 @@ async def profile_site_from_manual_browser(url: str) -> dict[str, str] | None:
         )
 
     if api_candidates:
-        api_profile = max(api_candidates, key=lambda item: item.get("sample_count", 0))
-        note = (f"已自动识别同源公开数据接口和 {api_profile['sample_count']} 条样本公告；"
-                f"标题字段 {api_profile['title_field']}，日期字段 {api_profile['date_field']}。无需重复人工确认。")
+        api_profile = expand_api_profile(max(api_candidates, key=lambda item: item.get("sample_count", 0)), safe_url)
+        feed_note = f"，并展开 {api_profile['feed_count']} 个公告栏目" if api_profile.get("feed_count") else ""
+        note = (f"已自动识别同源公开数据接口和 {api_profile['sample_count']} 条样本公告{feed_note}；"
+                f"标题字段 {api_profile['title_field']}，日期字段 {api_profile['date_field']}。采集时按日期完整翻页，无需重复人工确认。")
         return {"url": safe_url, "engine": "智能公开数据接口", "status": "已适配（公开数据接口）",
                 "selector": "", "note": note, "profile_json": json.dumps(api_profile, ensure_ascii=False)}
     usable = [item for item in links if len(item["title"]) >= 8 and item["href"].startswith(("http://", "https://"))]
@@ -351,48 +392,74 @@ def _fetch_public_json(url: str, site_url: str):
     return json.loads(body.decode("utf-8"))
 
 
+def _public_detail_url(site_url: str, record: dict, feed: dict) -> str:
+    if urlparse(site_url).hostname != "ec.jsgx.net":
+        return site_url
+    title = quote(str(record.get(feed["title_field"], "")), safe="")
+    if feed.get("detail_mode") == "purchase":
+        return (f"https://ec.jsgx.net/#/purchaseInformationDetails?pageType=check"
+                f"&mode={quote(str(record.get('codeMode', '')), safe='')}&inquCode={quote(str(record.get('businessCode', '')), safe='')}&title={title}")
+    identity = record.get("businessCode") if record.get("businessType") == "RP_PLANNING" else record.get("businessId")
+    return (f"https://ec.jsgx.net/#/publicannouncement/publicNewDetail?pageType=check"
+            f"&id={quote(str(identity or ''), safe='')}&noticeType={quote(str(record.get('businessType', '')), safe='')}"
+            f"&date={quote(str(record.get(feed['date_field'], '')), safe='')}")
+
+
 def _collect_public_api(site: dict, target_date: str, keywords: list[str], exclusions: list[str]) -> tuple[list[dict], str]:
     try:
         profile = json.loads(site.get("profile_json") or "{}")
-        endpoint = profile["endpoint"]
         if profile.get("mode") != "public_json":
             raise ValueError("接口配置无效")
-        found, visited = [], set()
-        for page_number in range(1, API_PAGE_LIMIT + 1):
-            parsed = urlparse(endpoint)
-            query = dict(parse_qsl(parsed.query, keep_blank_values=True))
-            if profile.get("page_param"):
-                query[profile["page_param"]] = str(page_number)
-            if profile.get("size_param"):
-                query[profile["size_param"]] = str(min(50, max(10, int(query.get(profile["size_param"], 20)))))
-            page_url = urlunparse(parsed._replace(query=urlencode(query)))
-            payload = _fetch_public_json(page_url, site["url"])
-            records = _records_at_path(payload, profile["records_path"])
-            if not records:
-                break
-            dates = []
-            for record in records:
-                title = " ".join(str(record.get(profile["title_field"], "")).split())
-                date_match = DATE.search(str(record.get(profile["date_field"], "")))
-                if not title or not date_match:
-                    continue
-                published = _normalize_date(date_match.group(0))
-                dates.append(published)
-                identity = str(record.get("id") or record.get("businessId") or record.get("businessCode") or title)
-                if published != target_date or identity in visited:
-                    continue
-                visited.add(identity)
-                notice_type = str(record.get(profile.get("type_field", ""), "公开公告")) or "公开公告"
-                body = " ".join(str(value) for value in record.values() if value is not None)
-                # Some SPAs do not expose stable detail URLs. The list URL remains
-                # clickable and identity is preserved by the title and record ID.
-                href = site["url"]
-                result = _result_item(site, title, href, target_date, notice_type, body, keywords, exclusions)
-                if result:
-                    found.append(result)
-            if not profile.get("page_param") or (dates and max(dates) < target_date):
-                break
-            time.sleep(DETAIL_FETCH_DELAY)
+        profile = expand_api_profile(profile, site["url"])
+        feeds = profile.get("feeds") or [profile]
+        found, visited, audits = [], set(), []
+        for feed in feeds:
+            parsed = urlparse(feed["endpoint"])
+            base_query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+            if feed.get("size_param"):
+                base_query[feed["size_param"]] = "50"
+            if feed.get("start_date_param"):
+                base_query[feed["start_date_param"]] = target_date
+            if feed.get("end_date_param"):
+                base_query[feed["end_date_param"]] = target_date
+            read_count, expected_total = 0, None
+            for page_number in range(1, API_PAGE_LIMIT + 1):
+                query = dict(base_query)
+                if feed.get("page_param"):
+                    query[feed["page_param"]] = str(page_number)
+                page_url = urlunparse(parsed._replace(query=urlencode(query)))
+                payload = _fetch_public_json(page_url, site["url"])
+                if expected_total is None and isinstance(payload, dict) and str(payload.get("total", "")).isdigit():
+                    expected_total = int(payload["total"])
+                records = _records_at_path(payload, feed["records_path"])
+                if not records:
+                    break
+                read_count += len(records)
+                for record in records:
+                    title = " ".join(str(record.get(feed["title_field"], "")).split())
+                    date_match = DATE.search(str(record.get(feed["date_field"], "")))
+                    if not title or not date_match or _normalize_date(date_match.group(0)) != target_date:
+                        continue
+                    identity = str(record.get("id") or record.get("businessId") or record.get("businessCode") or title)
+                    unique_key = (feed.get("label", ""), identity)
+                    if unique_key in visited:
+                        continue
+                    visited.add(unique_key)
+                    notice_type = feed.get("label") or str(record.get(feed.get("type_field", ""), "公开公告")) or "公开公告"
+                    body = " ".join(str(value) for value in record.values() if value is not None)
+                    result = _result_item(site, title, _public_detail_url(site["url"], record, feed), target_date,
+                                          notice_type, body, keywords, exclusions)
+                    if result:
+                        found.append(result)
+                if not feed.get("page_param") or len(records) < int(base_query.get(feed.get("size_param", ""), 50)):
+                    break
+                if expected_total is not None and read_count >= expected_total:
+                    break
+                time.sleep(DETAIL_FETCH_DELAY)
+            audits.append((feed.get("label", "公告"), expected_total, read_count))
+        incomplete = [f"{label} {read}/{total}" for label, total, read in audits if total is not None and read < total]
+        if incomplete:
+            return found, f"{site['name']}：分页完整性检查未通过（{'；'.join(incomplete)}），请提高 API_PAGE_LIMIT 后重试"
         return found, ""
     except Exception as exc:
         return [], f"{site['name']}：公开数据接口采集失败：{type(exc).__name__}"
