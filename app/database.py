@@ -74,6 +74,7 @@ def init_db() -> None:
             list_selector TEXT NOT NULL DEFAULT 'a',
             date_pattern TEXT NOT NULL DEFAULT '',
             profile_note TEXT NOT NULL DEFAULT '',
+            profile_json TEXT NOT NULL DEFAULT '',
             builtin_code TEXT,
             created_at TEXT NOT NULL
         );
@@ -81,6 +82,8 @@ def init_db() -> None:
         columns = {row["name"] for row in db.execute("PRAGMA table_info(custom_sites)")}
         if "builtin_code" not in columns:
             db.execute("ALTER TABLE custom_sites ADD COLUMN builtin_code TEXT")
+        if "profile_json" not in columns:
+            db.execute("ALTER TABLE custom_sites ADD COLUMN profile_json TEXT NOT NULL DEFAULT ''")
         db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_custom_sites_builtin_code ON custom_sites(builtin_code) WHERE builtin_code IS NOT NULL")
         tender_columns = {row["name"] for row in db.execute("PRAGMA table_info(tenders)")}
         for column, declaration in (
