@@ -8,13 +8,14 @@ from datetime import date, timedelta
 from urllib.parse import urlparse
 
 from apscheduler.schedulers.background import BackgroundScheduler
-from fastapi import FastAPI, Form, Request
+from fastapi import FastAPI, File, Form, Request, UploadFile
 from fastapi.responses import JSONResponse, PlainTextResponse, RedirectResponse, Response
+from fastapi.responses import StreamingResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
-from .database import backup_database, connect, init_db, now_text, set_setting, setting
+from .database import backup_database, connect, export_migration_bundle, import_migration_bundle, init_db, now_text, set_setting, setting
 from .connectors.custom import profile_site, profile_site_from_manual_browser, validate_public_url, validate_site_name
 
 app = FastAPI(title="数据采集管理平台")
@@ -66,6 +67,8 @@ def dashboard_context() -> dict:
         runs = db.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 8").fetchall()
         results = db.execute("SELECT * FROM tenders ORDER BY first_seen_at DESC LIMIT 20").fetchall()
         custom_sites = [dict(row) for row in db.execute("SELECT * FROM custom_sites ORDER BY id DESC")]
+        total_results = db.execute("SELECT COUNT(*) FROM tenders").fetchone()[0]
+        successful_runs = db.execute("SELECT COUNT(*) FROM runs WHERE status='success'").fetchone()[0]
     for site in custom_sites:
         try:
             validate_site_name(site["name"])
@@ -85,6 +88,8 @@ def dashboard_context() -> dict:
         else:
             site["next_step"] = "请确认填写的是公告列表页而非首页、详情页或搜索页；确认公开可访问后点击“重新识别”。"
     return {"keywords": keywords, "runs": runs, "results": results, "custom_sites": custom_sites,
+            "enabled_site_count": sum(1 for site in custom_sites if site["enabled"]),
+            "total_result_count": total_results, "successful_run_count": successful_runs,
             "schedule": setting("schedule", "08:00"), "recipient": setting("recipient"),
             "smtp_host": setting("smtp_host", "smtp.163.com"), "smtp_port": setting("smtp_port", "465"),
             "smtp_user": setting("smtp_user"), "smtp_from": setting("smtp_from"),
@@ -93,6 +98,7 @@ def dashboard_context() -> dict:
             "backup_schedule": setting("backup_schedule", "02:20"),
             "backup_retention_days": setting("backup_retention_days", "14"),
             "last_backup": setting("last_backup"), "backup_message": setting("backup_message"),
+            "migration_message": setting("migration_message"),
             "wecom_message": setting("wecom_message"),
             "wecom_push_message": setting("wecom_push_message"),
             "wecom_webhook_configured": bool(setting("wecom_webhook", secret=True)),
@@ -319,6 +325,34 @@ def save_admin_credentials(admin_username: str = Form(...), new_password: str = 
         return RedirectResponse("/", 303)
     set_setting("admin_username", admin_username.strip())
     set_setting("admin_password", new_password, secret=True)
+    return RedirectResponse("/", 303)
+
+
+@app.get("/migration/export")
+def download_migration_bundle():
+    payload = export_migration_bundle()
+    filename = f"data-collection-platform-{date.today().isoformat()}.zip"
+    return StreamingResponse(
+        iter([payload]),
+        media_type="application/zip",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"', "Cache-Control": "no-store"},
+    )
+
+
+@app.post("/migration/import")
+async def upload_migration_bundle(bundle: UploadFile = File(...), confirm_restore: str = Form("")):
+    if confirm_restore != "yes":
+        set_setting("migration_message", "请勾选确认后再导入。")
+        return RedirectResponse("/", 303)
+    try:
+        payload = await bundle.read(100 * 1024 * 1024 + 1)
+        rollback = import_migration_bundle(payload)
+        set_setting("migration_message", f"导入成功，旧站点、关键词、配置和历史结果已恢复。回滚备份：{rollback.name}")
+        reschedule()
+    except (ValueError, OSError) as exc:
+        set_setting("migration_message", f"导入失败：{exc}")
+    except Exception as exc:
+        set_setting("migration_message", f"导入失败：{type(exc).__name__}")
     return RedirectResponse("/", 303)
 
 
