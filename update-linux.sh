@@ -1,0 +1,88 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+[ "${EUID}" -eq 0 ] || { echo "请使用 sudo 运行更新脚本。" >&2; exit 1; }
+
+if [ -z "${INSTALL_DIR:-}" ]; then
+  if [ -d /opt/data-collection-management-platform/.git ]; then
+    INSTALL_DIR=/opt/data-collection-management-platform
+  elif [ -d /opt/tender-collection-platform/.git ]; then
+    INSTALL_DIR=/opt/tender-collection-platform
+  else
+    echo "未找到平台安装目录；可使用 INSTALL_DIR=/实际路径 重新运行。" >&2
+    exit 1
+  fi
+fi
+
+SERVICE_NAME="${SERVICE_NAME:-tender-platform}"
+SERVICE_USER="${SERVICE_USER:-tenderplatform}"
+GIT=(git -c "safe.directory=$INSTALL_DIR" -C "$INSTALL_DIR")
+
+[ -f "$INSTALL_DIR/.env" ] || { echo "缺少 $INSTALL_DIR/.env，无法安全更新。" >&2; exit 1; }
+[ -x "$INSTALL_DIR/.venv/bin/python" ] || { echo "Python 虚拟环境不存在，请重新执行一键安装。" >&2; exit 1; }
+
+if [ -n "$("${GIT[@]}" status --porcelain --untracked-files=no)" ]; then
+  echo "检测到程序目录存在本地代码修改，已停止更新，避免覆盖定制功能。" >&2
+  echo "请先提交/备份这些修改，或从网页导出完整迁移包后重新安装。" >&2
+  exit 1
+fi
+
+current_branch="$("${GIT[@]}" branch --show-current)"
+[ "$current_branch" = "main" ] || { echo "当前分支为 $current_branch，请切换到 main 后更新。" >&2; exit 1; }
+old_commit="$("${GIT[@]}" rev-parse HEAD)"
+update_started=0
+
+rollback() {
+  code=$?
+  if [ "$update_started" -eq 1 ]; then
+    echo "更新失败，正在恢复更新前程序版本……" >&2
+    "${GIT[@]}" reset --hard "$old_commit" >/dev/null
+    "$INSTALL_DIR/.venv/bin/pip" install -r "$INSTALL_DIR/requirements.txt" >/dev/null 2>&1 || true
+    systemctl restart "$SERVICE_NAME" >/dev/null 2>&1 || true
+  fi
+  exit "$code"
+}
+trap rollback ERR
+
+echo "正在创建更新前数据库备份……"
+su -s /bin/bash "$SERVICE_USER" -c "set -a; source '$INSTALL_DIR/.env'; set +a; cd '$INSTALL_DIR'; .venv/bin/python - <<'PY'
+import os, sqlite3
+from datetime import datetime
+from pathlib import Path
+source_path = Path(os.environ['DATABASE_PATH'])
+backup_dir = Path(os.environ.get('BACKUP_DIR', source_path.parent / 'backups'))
+backup_dir.mkdir(parents=True, exist_ok=True)
+target = backup_dir / f'pre-update-{datetime.now().astimezone():%Y%m%d-%H%M%S}.sqlite3'
+source, destination = sqlite3.connect(source_path), sqlite3.connect(target)
+try: source.backup(destination)
+finally: destination.close(); source.close()
+print(target)
+PY"
+
+echo "正在拉取 main 分支更新……"
+update_started=1
+"${GIT[@]}" pull --ff-only origin main
+
+echo "正在更新 Python 依赖和数据库结构……"
+"$INSTALL_DIR/.venv/bin/pip" install --upgrade pip wheel
+"$INSTALL_DIR/.venv/bin/pip" install -r "$INSTALL_DIR/requirements.txt"
+chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
+su -s /bin/bash "$SERVICE_USER" -c "set -a; source '$INSTALL_DIR/.env'; set +a; cd '$INSTALL_DIR'; .venv/bin/python -c 'from app.database import init_db; init_db()'"
+
+for nginx_file in /etc/nginx/sites-available/tender-platform /etc/nginx/conf.d/tender-platform.conf; do
+  if [ -f "$nginx_file" ]; then sed -i -E 's/client_max_body_size[[:space:]]+[0-9]+[mM];/client_max_body_size 110m;/' "$nginx_file"; fi
+done
+nginx -t
+systemctl reload nginx
+systemctl restart "$SERVICE_NAME"
+
+for attempt in 1 2 3 4 5 6 7 8 9 10; do
+  if curl -fsS http://127.0.0.1:8000/healthz >/dev/null; then break; fi
+  [ "$attempt" -lt 10 ] || { echo "更新后健康检查失败。" >&2; exit 1; }
+  sleep 2
+done
+
+new_commit="$("${GIT[@]}" rev-parse --short HEAD)"
+update_started=0
+trap - ERR
+echo "更新完成，当前版本：$new_commit"
