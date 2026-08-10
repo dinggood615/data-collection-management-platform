@@ -26,7 +26,7 @@ templates = Jinja2Templates(directory="app/templates")
 scheduler = BackgroundScheduler(timezone="Asia/Shanghai")
 SESSION_COOKIE = "tender_session"
 SESSION_TTL_SECONDS = 8 * 60 * 60
-COLLECTABLE_CUSTOM_STATUSES = {"已适配（静态列表）", "已适配（动态浏览器）", "已适配（专用采集器）"}
+COLLECTABLE_CUSTOM_STATUSES = {"已适配（静态列表）", "已适配（动态浏览器）", "已适配（公开数据接口）", "已适配（专用采集器）"}
 
 
 def session_serializer() -> URLSafeTimedSerializer:
@@ -163,8 +163,8 @@ def add_custom_site(name: str = Form(...), url: str = Form(...)):
         profile = profile_site(safe_url)
         with connect() as db:
             enabled = 1 if profile["status"] in COLLECTABLE_CUSTOM_STATUSES else 0
-            db.execute("""INSERT INTO custom_sites(name,url,enabled,engine,status,list_selector,profile_note,created_at)
-                VALUES(?,?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET name=excluded.name,enabled=excluded.enabled,engine=excluded.engine,status=excluded.status,list_selector=excluded.list_selector,profile_note=excluded.profile_note""", (safe_name, profile["url"], enabled, profile["engine"], profile["status"], profile["selector"], profile["note"], now_text()))
+            db.execute("""INSERT INTO custom_sites(name,url,enabled,engine,status,list_selector,profile_note,profile_json,created_at)
+                VALUES(?,?,?,?,?,?,?,?,?) ON CONFLICT(url) DO UPDATE SET name=excluded.name,enabled=excluded.enabled,engine=excluded.engine,status=excluded.status,list_selector=excluded.list_selector,profile_note=excluded.profile_note,profile_json=excluded.profile_json""", (safe_name, profile["url"], enabled, profile["engine"], profile["status"], profile["selector"], profile["note"], profile.get("profile_json", ""), now_text()))
         set_setting("custom_site_message", f"{safe_name}：{profile['status']}。请查看下方下一步指引。")
     except ValueError as exc:
         set_setting("custom_site_message", str(exc))
@@ -186,7 +186,7 @@ def update_custom_site(site_id: int, name: str = Form(...), url: str = Form(...)
                 raise ValueError("未找到该站点")
             if exists["builtin_code"]:
                 raise ValueError("内置站点的地址由专用采集规则管理；可使用下方操作进行验证、重新识别、启用或删除。")
-            db.execute("UPDATE custom_sites SET name=?,url=?,enabled=?,engine=?,status=?,list_selector=?,profile_note=? WHERE id=?", (safe_name, profile["url"], enabled, profile["engine"], profile["status"], profile["selector"], profile["note"], site_id))
+            db.execute("UPDATE custom_sites SET name=?,url=?,enabled=?,engine=?,status=?,list_selector=?,profile_note=?,profile_json=? WHERE id=?", (safe_name, profile["url"], enabled, profile["engine"], profile["status"], profile["selector"], profile["note"], profile.get("profile_json", ""), site_id))
         set_setting("custom_site_message", f"{safe_name}：已保存并完成自动识别。")
     except ValueError as exc:
         set_setting("custom_site_message", str(exc))
@@ -231,9 +231,9 @@ def reprofile_custom_site(site_id: int):
             profile = profile_site(site["url"])
         with connect() as db:
             enabled = 1 if profile["status"] in COLLECTABLE_CUSTOM_STATUSES else 0
-            db.execute("UPDATE custom_sites SET enabled=?,engine=?,status=?,list_selector=?,profile_note=? WHERE id=?", (enabled, profile["engine"], profile["status"], profile["selector"], profile["note"], site_id))
-        if profile["status"] == "已适配（动态浏览器）":
-            set_setting("custom_site_message", f"{site['name']}：已根据人工验证后的 Chrome 页面完成动态适配，并已启用。")
+            db.execute("UPDATE custom_sites SET enabled=?,engine=?,status=?,list_selector=?,profile_note=?,profile_json=? WHERE id=?", (enabled, profile["engine"], profile["status"], profile["selector"], profile["note"], profile.get("profile_json", ""), site_id))
+        if profile["status"] in {"已适配（动态浏览器）", "已适配（公开数据接口）"}:
+            set_setting("custom_site_message", f"{site['name']}：已完成智能适配并自动启用，无需重复人工确认。")
         else:
             set_setting("custom_site_message", f"{site['name']}：自动适配已更新")
     except Exception as exc:

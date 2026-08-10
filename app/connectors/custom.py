@@ -2,11 +2,13 @@ from __future__ import annotations
 
 import ipaddress
 import asyncio
+import json
 import os
 import re
 import socket
 import time
-from urllib.parse import urljoin, urlparse
+from urllib.parse import parse_qsl, urlencode, urljoin, urlparse, urlunparse
+from urllib.request import Request, urlopen
 
 from bs4 import BeautifulSoup
 from scrapling.fetchers import Fetcher
@@ -17,6 +19,10 @@ DATE = re.compile(r"20\d{2}(?:[-./年])\d{1,2}(?:[-./月])\d{1,2}(?:日)?")
 DYNAMIC_MARKERS = ("__NEXT_DATA__", "__NUXT__", "webpackJsonp", "vue", "react", "captcha", "验证码")
 DETAIL_FETCH_LIMIT = max(1, min(int(os.getenv("DETAIL_FETCH_LIMIT", "20")), 50))
 DETAIL_FETCH_DELAY = max(0.2, min(float(os.getenv("DETAIL_FETCH_DELAY", "0.6")), 5.0))
+API_PAGE_LIMIT = max(1, min(int(os.getenv("API_PAGE_LIMIT", "10")), 30))
+TITLE_KEYS = ("datatitle", "title", "subject", "noticetitle", "projectname", "name")
+DATE_KEYS = ("releasetimestr", "releasedate", "publishtime", "publishdate", "createdate", "date", "time")
+TYPE_KEYS = ("codemodename", "noticetype", "businessname", "categoryname", "type")
 
 # Scrapling needs adaptive mode and a writable SQLite store before a response
 # is created. This is only for our learned list CSS, never cookies or passwords.
@@ -97,6 +103,75 @@ def profile_site(url: str) -> dict[str, str]:
     return {"url": safe_url, "engine": "需要人工确认", "status": "待人工确认", "selector": "a", "note": note}
 
 
+def _walk_record_lists(value, path: str = "$") -> list[tuple[str, list[dict]]]:
+    """Find JSON arrays that look like repeated public records."""
+    found: list[tuple[str, list[dict]]] = []
+    if isinstance(value, dict):
+        for key, child in value.items():
+            found.extend(_walk_record_lists(child, f"{path}.{key}"))
+    elif isinstance(value, list):
+        records = [item for item in value if isinstance(item, dict)]
+        if len(records) >= 3 and len(records) >= len(value) * 0.8:
+            found.append((path, records))
+        for index, child in enumerate(value[:3]):
+            if isinstance(child, (dict, list)):
+                found.extend(_walk_record_lists(child, f"{path}[{index}]"))
+    return found
+
+
+def _field_for(records: list[dict], preferred: tuple[str, ...], kind: str) -> str:
+    keys = list(dict.fromkeys(key for row in records[:10] for key in row))
+    for wanted in preferred:
+        for key in keys:
+            if key.casefold() == wanted:
+                return key
+    for key in keys:
+        values = [str(row.get(key, "")) for row in records[:10] if row.get(key) is not None]
+        if kind == "title" and sum(len(value.strip()) >= 8 for value in values) >= 3:
+            return key
+        if kind == "date" and sum(bool(DATE.search(value)) for value in values) >= 3:
+            return key
+    return ""
+
+
+def infer_api_profile(response_url: str, payload, site_url: str) -> dict | None:
+    """Infer a reusable, non-secret profile from a same-origin public JSON response."""
+    if not _same_public_host(site_url, response_url):
+        return None
+    best = None
+    for path, records in _walk_record_lists(payload):
+        title_field = _field_for(records, TITLE_KEYS, "title")
+        date_field = _field_for(records, DATE_KEYS, "date")
+        if not title_field or not date_field:
+            continue
+        score = len(records) + sum(bool(DATE.search(str(row.get(date_field, "")))) for row in records)
+        candidate = (score, path, records, title_field, date_field)
+        if best is None or candidate[0] > best[0]:
+            best = candidate
+    if best is None:
+        return None
+    _, path, records, title_field, date_field = best
+    type_field = _field_for(records, TYPE_KEYS, "type")
+    parsed = urlparse(response_url)
+    query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+    query.pop("t", None)
+    page_param = next((key for key in query if key.casefold() in {"pagenum", "page", "pageindex", "current"}), "")
+    size_param = next((key for key in query if key.casefold() in {"pagesize", "size", "limit"}), "")
+    endpoint = urlunparse(parsed._replace(query=urlencode(query)))
+    return {"version": 1, "mode": "public_json", "endpoint": endpoint, "records_path": path,
+            "title_field": title_field, "date_field": date_field, "type_field": type_field,
+            "page_param": page_param, "size_param": size_param, "sample_count": len(records)}
+
+
+def _records_at_path(payload, path: str) -> list[dict]:
+    value = payload
+    for part in path.removeprefix("$.").split(".") if path != "$" else []:
+        if "[" in part:
+            part = part.split("[", 1)[0]
+        value = value.get(part, {}) if isinstance(value, dict) else {}
+    return [item for item in value if isinstance(item, dict)] if isinstance(value, list) else []
+
+
 async def profile_site_from_manual_browser(url: str) -> dict[str, str] | None:
     """Profile the page currently opened in the visible, user-approved Chrome.
 
@@ -115,7 +190,26 @@ async def profile_site_from_manual_browser(url: str) -> dict[str, str] | None:
         page = next((item for item in reversed(pages) if urlparse(item.url).netloc.lower() == expected_host), None)
         if page is None:
             return None
-        await page.wait_for_timeout(800)
+        api_candidates: list[dict] = []
+
+        async def inspect_response(response) -> None:
+            try:
+                if response.request.method != "GET" or not _same_public_host(safe_url, response.url):
+                    return
+                content_type = response.headers.get("content-type", "").lower()
+                if "json" not in content_type:
+                    return
+                profile = infer_api_profile(response.url, await response.json(), safe_url)
+                if profile:
+                    api_candidates.append(profile)
+            except Exception:
+                return
+
+        page.on("response", inspect_response)
+        # Reload once so response listeners can observe the same public requests
+        # the page itself makes. No challenge solving, credentials or headers are captured.
+        await page.reload(wait_until="domcontentloaded", timeout=45000)
+        await page.wait_for_timeout(1800)
         links = await page.locator("a[href]").evaluate_all(
             """items => items.slice(0, 250).map(item => ({
                 title: (item.innerText || item.textContent || '').replace(/\\s+/g, ' ').trim(),
@@ -123,12 +217,32 @@ async def profile_site_from_manual_browser(url: str) -> dict[str, str] | None:
                 context: ((item.closest('tr, li, article, .item, .list-item, .notice-item, .news-item') || item.parentElement || item).innerText || '').replace(/\\s+/g, ' ').trim()
             }))"""
         )
+        cards = await page.locator("tr, li, article, [class*='card'], [class*='notice'], [class*='item']").evaluate_all(
+            """items => items.slice(0, 350).map(item => {
+                const text = (item.innerText || item.textContent || '').replace(/\\s+/g, ' ').trim();
+                const heading = item.querySelector('h1,h2,h3,h4,[class*="title"],a');
+                return {title: ((heading && (heading.innerText || heading.textContent)) || text).replace(/\\s+/g, ' ').trim(), context: text};
+            })"""
+        )
 
+    if api_candidates:
+        api_profile = max(api_candidates, key=lambda item: item.get("sample_count", 0))
+        note = (f"已自动识别同源公开数据接口和 {api_profile['sample_count']} 条样本公告；"
+                f"标题字段 {api_profile['title_field']}，日期字段 {api_profile['date_field']}。无需重复人工确认。")
+        return {"url": safe_url, "engine": "智能公开数据接口", "status": "已适配（公开数据接口）",
+                "selector": "", "note": note, "profile_json": json.dumps(api_profile, ensure_ascii=False)}
     usable = [item for item in links if len(item["title"]) >= 8 and item["href"].startswith(("http://", "https://"))]
     dated = sum(1 for item in usable if DATE.search(item["context"]))
     if len(usable) >= 3:
         note = f"已从人工验证后的可视 Chrome 读取到 {len(usable)} 条候选链接，其中 {dated} 条标题含日期；后续采集会复用该浏览器会话。"
-        return {"url": safe_url, "engine": "可视 Chrome（人工验证）", "status": "已适配（动态浏览器）", "selector": "a", "note": note}
+        return {"url": safe_url, "engine": "可视 Chrome（人工验证）", "status": "已适配（动态浏览器）", "selector": "a", "note": note, "profile_json": ""}
+    card_records = [item for item in cards if len(item["title"]) >= 8 and DATE.search(item["context"])]
+    if len(card_records) >= 3:
+        note = f"识别到 {len(card_records)} 条可点击公告卡片；该站点没有传统链接，后续采集将使用动态卡片模式。"
+        profile = {"version": 1, "mode": "rendered_cards"}
+        return {"url": safe_url, "engine": "可视 Chrome（智能卡片）", "status": "已适配（动态浏览器）",
+                "selector": "tr, li, article, [class*='card'], [class*='notice'], [class*='item']",
+                "note": note, "profile_json": json.dumps(profile, ensure_ascii=False)}
     return {"url": safe_url, "engine": "可视 Chrome（人工验证）", "status": "待人工确认", "selector": "a", "note": "已连接到可视 Chrome，但当前页面尚未识别出足够的公告链接。请确认已进入公告列表并完成网站允许的操作后，再点击“完成验证并自动适配”。"}
 
 
@@ -222,8 +336,72 @@ async def _collect_dynamic_site(site: dict, target_date: str, keywords: list[str
     return found, ""
 
 
+def _fetch_public_json(url: str, site_url: str):
+    if not _same_public_host(site_url, url):
+        raise ValueError("接口地址与采集站点不同源")
+    validate_public_url(url)
+    request = Request(url, headers={"User-Agent": "Mozilla/5.0 (compatible; DataCollectionPlatform/1.0)",
+                                    "Accept": "application/json", "Referer": site_url})
+    with urlopen(request, timeout=20) as response:
+        if "json" not in response.headers.get_content_type():
+            raise ValueError("接口没有返回 JSON")
+        body = response.read(3 * 1024 * 1024 + 1)
+        if len(body) > 3 * 1024 * 1024:
+            raise ValueError("接口响应过大")
+    return json.loads(body.decode("utf-8"))
+
+
+def _collect_public_api(site: dict, target_date: str, keywords: list[str], exclusions: list[str]) -> tuple[list[dict], str]:
+    try:
+        profile = json.loads(site.get("profile_json") or "{}")
+        endpoint = profile["endpoint"]
+        if profile.get("mode") != "public_json":
+            raise ValueError("接口配置无效")
+        found, visited = [], set()
+        for page_number in range(1, API_PAGE_LIMIT + 1):
+            parsed = urlparse(endpoint)
+            query = dict(parse_qsl(parsed.query, keep_blank_values=True))
+            if profile.get("page_param"):
+                query[profile["page_param"]] = str(page_number)
+            if profile.get("size_param"):
+                query[profile["size_param"]] = str(min(50, max(10, int(query.get(profile["size_param"], 20)))))
+            page_url = urlunparse(parsed._replace(query=urlencode(query)))
+            payload = _fetch_public_json(page_url, site["url"])
+            records = _records_at_path(payload, profile["records_path"])
+            if not records:
+                break
+            dates = []
+            for record in records:
+                title = " ".join(str(record.get(profile["title_field"], "")).split())
+                date_match = DATE.search(str(record.get(profile["date_field"], "")))
+                if not title or not date_match:
+                    continue
+                published = _normalize_date(date_match.group(0))
+                dates.append(published)
+                identity = str(record.get("id") or record.get("businessId") or record.get("businessCode") or title)
+                if published != target_date or identity in visited:
+                    continue
+                visited.add(identity)
+                notice_type = str(record.get(profile.get("type_field", ""), "公开公告")) or "公开公告"
+                body = " ".join(str(value) for value in record.values() if value is not None)
+                # Some SPAs do not expose stable detail URLs. The list URL remains
+                # clickable and identity is preserved by the title and record ID.
+                href = site["url"]
+                result = _result_item(site, title, href, target_date, notice_type, body, keywords, exclusions)
+                if result:
+                    found.append(result)
+            if not profile.get("page_param") or (dates and max(dates) < target_date):
+                break
+            time.sleep(DETAIL_FETCH_DELAY)
+        return found, ""
+    except Exception as exc:
+        return [], f"{site['name']}：公开数据接口采集失败：{type(exc).__name__}"
+
+
 def collect_custom_site(site: dict, target_date: str, keywords: list[str], exclusions: list[str] | None = None) -> tuple[list[dict], str]:
     exclusions = exclusions or []
+    if site["status"] == "已适配（公开数据接口）":
+        return _collect_public_api(site, target_date, keywords, exclusions)
     if site["status"] == "已适配（动态浏览器）":
         try:
             return asyncio.run(_collect_dynamic_site(site, target_date, keywords, exclusions))
