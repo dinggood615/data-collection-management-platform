@@ -17,6 +17,7 @@ from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 from .database import backup_database, connect, export_migration_bundle, import_migration_bundle, init_db, now_text, reset_platform_state, set_setting, setting
 from .connectors.custom import profile_site, profile_site_from_manual_browser, validate_public_url, validate_site_name
+from .emailing import normalize_recipients
 
 app = FastAPI(title="数据采集管理平台")
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
@@ -91,6 +92,7 @@ def dashboard_context() -> dict:
             "enabled_site_count": sum(1 for site in custom_sites if site["enabled"]),
             "total_result_count": total_results, "successful_run_count": successful_runs,
             "schedule": setting("schedule"), "recipient": setting("recipient"),
+            "email_message": setting("email_message"),
             "smtp_host": setting("smtp_host"), "smtp_port": setting("smtp_port"),
             "smtp_user": setting("smtp_user"), "smtp_from": setting("smtp_from"),
             "smtp_configured": bool(setting("smtp_auth_code", secret=True)), "admin_username": setting("admin_username", "admin"),
@@ -293,16 +295,25 @@ def toggle_keyword(term: str):
 
 @app.post("/settings")
 def save_settings(schedule: str = Form(...), recipient: str = Form(...), smtp_host: str = Form(...), smtp_port: str = Form(...), smtp_user: str = Form(...), smtp_from: str = Form(...), smtp_auth_code: str = Form("")):
+    try:
+        recipients = normalize_recipients(recipient)
+        port = int(smtp_port)
+        if not 1 <= port <= 65535:
+            raise ValueError("SMTP 端口必须在 1 到 65535 之间。")
+    except ValueError as exc:
+        set_setting("email_message", str(exc))
+        return RedirectResponse("/#delivery", 303)
     set_setting("schedule", schedule)
-    set_setting("recipient", recipient.strip())
+    set_setting("recipient", ",".join(recipients))
     set_setting("smtp_host", smtp_host.strip())
     set_setting("smtp_port", smtp_port.strip())
     set_setting("smtp_user", smtp_user.strip())
     set_setting("smtp_from", smtp_from.strip())
     if smtp_auth_code.strip():
         set_setting("smtp_auth_code", smtp_auth_code.strip(), secret=True)
+    set_setting("email_message", f"邮件与定时设置已保存，共 {len(recipients)} 个收件邮箱。")
     reschedule()
-    return RedirectResponse("/", 303)
+    return RedirectResponse("/#delivery", 303)
 
 
 @app.post("/backup-settings")

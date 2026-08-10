@@ -105,6 +105,33 @@ jobs:
           PY
       - name: Verify dashboard template
         run: python -c "from jinja2 import Environment, FileSystemLoader; Environment(loader=FileSystemLoader('app/templates')).get_template('index.html')"
+      - name: Verify multiple email recipients
+        run: |
+          python - <<'PY'
+          from unittest.mock import patch
+          from app.emailing import normalize_recipients
+          from app.runner import send_report
+
+          assert normalize_recipients("first@example.com；Second@example.com\nfirst@example.com") == [
+              "first@example.com", "Second@example.com"
+          ]
+          for invalid in ("invalid", "first@example.com\nBcc: hidden@example.com", "Name <first@example.com>"):
+              try:
+                  normalize_recipients(invalid)
+              except ValueError:
+                  pass
+              else:
+                  raise AssertionError(invalid)
+
+          config = {"host": "smtp.example.com", "port": "465", "user": "sender@example.com", "from": "", "auth_code": "secret"}
+          recipients = ["first@example.com", "second@example.com"]
+          with patch("app.runner.smtplib.SMTP_SSL") as smtp_ssl:
+              send_report(recipients, "2026-08-10", 0, [], [], config)
+              server = smtp_ssl.return_value.__enter__.return_value
+              message = server.send_message.call_args.args[0]
+              assert server.send_message.call_args.kwargs["to_addrs"] == recipients
+              assert str(message["To"]) == "first@example.com, second@example.com"
+          PY
       - name: Verify health endpoint
         run: |
           export DATABASE_PATH="$RUNNER_TEMP/health.sqlite3"
