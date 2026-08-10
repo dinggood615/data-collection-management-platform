@@ -22,6 +22,23 @@ jobs:
           for script in install.sh install-linux.sh install-docker.sh install-browser.sh update-linux.sh manage.sh uninstall-linux.sh; do
             bash -n "$script"
           done
+      - name: Verify clean first-run state
+        run: |
+          export DATABASE_PATH="$RUNNER_TEMP/clean.sqlite3"
+          export APP_SECRET="ci-clean-state-secret"
+          unset SMTP_HOST SMTP_PORT SMTP_USER SMTP_AUTH_CODE SMTP_FROM SMTP_TO WECOM_CORP_ID WECOM_CALLBACK_TOKEN WECOM_ENCODING_AES_KEY WECOM_ADMIN_USERS WECOM_PUBLIC_URL WECOM_WEBHOOK WECOM_PUSH_ENABLED
+          python - <<'PY'
+          from app.database import connect, init_db, setting
+          init_db()
+          with connect() as db:
+              for table in ("custom_sites", "keywords", "tenders", "runs"):
+                  assert db.execute(f"SELECT COUNT(*) FROM {table}").fetchone()[0] == 0, table
+          for key in ("schedule", "recipient", "smtp_host", "smtp_port", "smtp_user", "smtp_from",
+                      "wecom_corp_id", "wecom_callback_token", "wecom_encoding_aes_key",
+                      "wecom_admin_users", "wecom_public_url", "wecom_webhook"):
+              assert setting(key, secret=key in {"wecom_corp_id", "wecom_callback_token", "wecom_encoding_aes_key", "wecom_webhook"}) == "", key
+          assert setting("wecom_push_enabled") == "0"
+          PY
       - name: Verify database backup and migration round-trip
         run: |
           export DATABASE_PATH="$RUNNER_TEMP/platform.sqlite3"
