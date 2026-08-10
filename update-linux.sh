@@ -76,11 +76,20 @@ nginx -t
 systemctl reload nginx
 systemctl restart "$SERVICE_NAME"
 
-for attempt in 1 2 3 4 5 6 7 8 9 10; do
-  if curl -fsS http://127.0.0.1:8000/healthz >/dev/null; then break; fi
-  [ "$attempt" -lt 10 ] || { echo "更新后健康检查失败。" >&2; exit 1; }
+echo "正在等待更新后的平台服务启动……"
+health_ok=0
+for attempt in $(seq 1 30); do
+  if curl -fs http://127.0.0.1:8000/healthz >/dev/null 2>&1; then health_ok=1; break; fi
+  if systemctl is-failed --quiet "$SERVICE_NAME"; then break; fi
   sleep 2
 done
+if [ "$health_ok" -ne 1 ]; then
+  systemctl status "$SERVICE_NAME" --no-pager >&2 || true
+  journalctl -u "$SERVICE_NAME" -n 40 --no-pager >&2 || true
+  echo "更新后平台在 60 秒内未通过健康检查。" >&2
+  exit 1
+fi
+echo "平台健康检查通过。"
 
 new_commit="$("${GIT[@]}" rev-parse --short HEAD)"
 update_started=0

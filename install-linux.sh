@@ -19,6 +19,38 @@ die() { echo "错误：$*" >&2; exit 1; }
 [ "${EUID}" -eq 0 ] || die "请使用 sudo 运行"
 [ -d /run/systemd/system ] || die "原生安装需要 systemd；容器环境请使用 Docker 安装。"
 
+wait_for_platform() {
+  local attempt
+  echo "正在等待数据采集管理平台启动……"
+  for attempt in $(seq 1 30); do
+    if curl -fs "http://127.0.0.1:$BACKEND_PORT/healthz" >/dev/null 2>&1; then
+      echo "平台后端健康检查通过。"
+      return 0
+    fi
+    if systemctl is-failed --quiet tender-platform.service; then
+      journalctl -u tender-platform.service -n 40 --no-pager >&2 || true
+      die "平台服务启动失败，以上是最近的服务日志。"
+    fi
+    sleep 2
+  done
+  systemctl status tender-platform.service --no-pager >&2 || true
+  journalctl -u tender-platform.service -n 40 --no-pager >&2 || true
+  die "平台在 60 秒内未通过健康检查，以上是服务状态和最近日志。"
+}
+
+verify_https_entry() {
+  local attempt
+  for attempt in $(seq 1 15); do
+    if curl -kfs "https://127.0.0.1:$PUBLIC_PORT/healthz" >/dev/null 2>&1; then
+      echo "HTTPS 访问入口检查通过。"
+      return 0
+    fi
+    sleep 1
+  done
+  nginx -t >&2 || true
+  die "平台后端正常，但 HTTPS 入口检查失败；请检查 Nginx 服务和端口 $PUBLIC_PORT。"
+}
+
 install_packages() {
   if command -v apt-get >/dev/null; then
     apt-get update
@@ -160,16 +192,7 @@ systemctl daemon-reload
 systemctl enable --now tender-platform.service
 systemctl enable nginx.service
 systemctl restart nginx.service
-for attempt in 1 2 3 4 5 6 7 8 9 10; do
-  # Check Uvicorn directly.  Nginx may still be reloading its certificate or
-  # access-control configuration, so it should not make a successful install
-  # look like a failed application start.
-  if curl -fsS "http://127.0.0.1:$BACKEND_PORT/healthz" >/dev/null; then
-    break
-  fi
-  [ "$attempt" -eq 10 ] && die "平台健康检查失败，请执行：journalctl -u tender-platform -n 80 --no-pager"
-  sleep 2
-done
+wait_for_platform
 if [ -n "$DOMAIN" ]; then
   echo "正在为 $DOMAIN 申请 Let's Encrypt 证书；请确认 DNS 已解析到本服务器且已放行 80、443。"
   open_tls_firewall_ports
@@ -189,5 +212,6 @@ if [ -n "$DOMAIN" ]; then
 else
   echo "提示：当前使用自签名证书；企业微信聊天助手需要有效域名 HTTPS 证书。"
 fi
+verify_https_entry
 echo "完成：访问 https://服务器IP:$PUBLIC_PORT。初始账户 admin/admin，请立即修改。"
 echo "人工验证：在自定义站点卡片点击‘打开此站验证’，无需 SSH 隧道。"
