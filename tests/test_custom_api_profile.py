@@ -45,6 +45,8 @@ def test_multifeed_collector_uses_date_filter_and_all_pages(monkeypatch):
     calls = []
 
     def fake_fetch(url, _site_url):
+        if "/api-purchase/publicity/supp/get" in url:
+            return {"code": 401}
         query = parse_qs(urlparse(url).query)
         calls.append(query)
         page = int(query["pageNum"][0])

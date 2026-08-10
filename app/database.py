@@ -87,6 +87,9 @@ def init_db() -> None:
         db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_custom_sites_builtin_code ON custom_sites(builtin_code) WHERE builtin_code IS NOT NULL")
         tender_columns = {row["name"] for row in db.execute("PRAGMA table_info(tenders)")}
         for column, declaration in (
+            ("source_item_id", "TEXT NOT NULL DEFAULT ''"),
+            ("last_seen_at", "TEXT NOT NULL DEFAULT ''"),
+            ("revision_hash", "TEXT NOT NULL DEFAULT ''"),
             ("relevance_score", "INTEGER NOT NULL DEFAULT 0"),
             ("relevance_level", "TEXT NOT NULL DEFAULT ''"),
             ("match_reason", "TEXT NOT NULL DEFAULT ''"),
@@ -94,6 +97,7 @@ def init_db() -> None:
         ):
             if column not in tender_columns:
                 db.execute(f"ALTER TABLE tenders ADD COLUMN {column} {declaration}")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_tenders_source_item ON tenders(source,source_item_id)")
         defaults = (
             ("admin_username", os.getenv("ADMIN_USERNAME", "admin")),
             ("schedule", ""), ("recipient", os.getenv("SMTP_TO", "")),
