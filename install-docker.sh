@@ -2,18 +2,21 @@
 set -euo pipefail
 
 # One-command Docker installer for Ubuntu/Debian.
-REPOSITORY_URL="${1:-https://github.com/REPLACE_ME/tender-collection-platform.git}"
-INSTALL_DIR="${INSTALL_DIR:-/opt/tender-collection-platform}"
+REPOSITORY_URL="${1:-https://github.com/dinggood615/data-collection-management-platform.git}"
+INSTALL_DIR="${INSTALL_DIR:-/opt/data-collection-management-platform}"
 
 if [ "${EUID}" -ne 0 ]; then echo "请使用 sudo 运行"; exit 1; fi
-if [[ "$REPOSITORY_URL" == *"REPLACE_ME"* ]]; then
-  echo "用法：sudo bash install-docker.sh https://github.com/<账号>/tender-collection-platform.git"
-  exit 1
-fi
 apt-get update
 apt-get install -y ca-certificates curl git openssl
 command -v docker >/dev/null || curl -fsSL https://get.docker.com | sh
-if [ -d "$INSTALL_DIR/.git" ]; then git -C "$INSTALL_DIR" pull --ff-only; else git clone "$REPOSITORY_URL" "$INSTALL_DIR"; fi
+git_repo() {
+  if [ -n "${GITHUB_TOKEN:-}" ]; then
+    git -c http.extraHeader="Authorization: Bearer ${GITHUB_TOKEN}" "$@"
+  else
+    git "$@"
+  fi
+}
+if [ -d "$INSTALL_DIR/.git" ]; then git_repo -C "$INSTALL_DIR" pull --ff-only; else git_repo clone "$REPOSITORY_URL" "$INSTALL_DIR"; fi
 cd "$INSTALL_DIR"
 if [ ! -f .env ]; then
   cp .env.example .env

@@ -7,28 +7,15 @@ import ssl
 from datetime import datetime
 from email.message import EmailMessage
 
-from .connectors.szecp import collect_szecp
-from .connectors.zjenergy import collect_zjenergy
 from .connectors.custom import collect_custom_site
 from .database import connect, setting
 
 
 def collect_enabled_sites(target_date: str) -> tuple[int, int, str]:
     with connect() as db:
-        enabled = {row["code"] for row in db.execute("SELECT code FROM sites WHERE enabled=1")}
         keywords = [row["term"] for row in db.execute("SELECT term FROM keywords WHERE enabled=1")]
         custom_sites = [dict(row) for row in db.execute("SELECT * FROM custom_sites WHERE enabled=1")]
     items, notices = [], []
-    if "szecp_tender" in enabled or "szecp_purchase" in enabled:
-        batch, warning = collect_szecp(target_date, enabled, keywords)
-        items.extend(batch)
-        if warning:
-            notices.append(warning)
-    if "zjenergy" in enabled:
-        batch, warning = collect_zjenergy(target_date, keywords)
-        items.extend(batch)
-        if warning:
-            notices.append(warning)
     for site in custom_sites:
         batch, warning = collect_custom_site(site, target_date, keywords)
         items.extend(batch)
