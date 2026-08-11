@@ -14,6 +14,7 @@ from bs4 import BeautifulSoup
 from scrapling.fetchers import Fetcher
 
 from ..matching import evaluate_relevance
+from .cnpc import collect as collect_cnpc, is_cnpc_url, profile_page as profile_cnpc_page
 
 DATE = re.compile(r"20\d{2}(?:[-./年])\d{1,2}(?:[-./月])\d{1,2}(?:日)?")
 DYNAMIC_MARKERS = ("__NEXT_DATA__", "__NUXT__", "webpackJsonp", "vue", "react", "captcha", "验证码")
@@ -83,6 +84,10 @@ def _score_selector(page, selector: str) -> tuple[int, int, int]:
 def profile_site(url: str) -> dict[str, str]:
     """Low-frequency, one-page profiling. It never retries or defeats a challenge."""
     safe_url = validate_public_url(url)
+    if is_cnpc_url(safe_url):
+        return {"url": safe_url, "engine": "中石油专用动态浏览器", "status": "需要人工验证",
+                "selector": ".el-table__body-wrapper tbody tr", "profile_json": "",
+                "note": "已识别为中石油招标网。请点击“打开此站验证”，手动完成网站验证后再点击“重新识别”。"}
     page = Fetcher.get(safe_url, timeout=20, impersonate="chrome")
     best = max((_score_selector(page, item) + (item,) for item in _selector_candidates(page)), default=(0, 0, 0, "a"))
     score, count, dated, selector = best
@@ -230,6 +235,8 @@ async def profile_site_from_manual_browser(url: str) -> dict[str, str] | None:
         page = next((item for item in reversed(pages) if urlparse(item.url).netloc.lower() == expected_host), None)
         if page is None:
             return None
+        if is_cnpc_url(safe_url):
+            return await profile_cnpc_page(page, safe_url)
         api_candidates: list[dict] = []
 
         async def inspect_response(response) -> None:
@@ -340,6 +347,8 @@ async def _collect_dynamic_site(site: dict, target_date: str, keywords: list[str
         context = browser.contexts[0]
         page = await context.new_page()
         try:
+            if is_cnpc_url(site["url"]):
+                return await collect_cnpc(page, site, target_date, keywords, exclusions, _result_item)
             await page.goto(site["url"], wait_until="domcontentloaded", timeout=45000)
             await page.wait_for_timeout(1800)
             entries = await page.locator("a[href]").evaluate_all(
