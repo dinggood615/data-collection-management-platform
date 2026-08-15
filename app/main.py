@@ -38,7 +38,7 @@ def summarize_run_messages(messages: list[str] | str) -> str:
     notes: list[str] = []
     for value in values:
         normalized = re.sub(r"；回查 \d{4}-\d{2}-\d{2}：", "；", value or "")
-        for part in normalized.split("；"):
+        for part in re.split(r"[；;]", normalized):
             part = part.strip()
             if not part or part == "采集完成":
                 continue
@@ -49,6 +49,8 @@ def summarize_run_messages(messages: list[str] | str) -> str:
                 continue
             label = site.strip()
             text = detail.strip()
+            if any(marker in label for marker in ("失败", "更新", "重试", "失效", "未发现", "未读取")):
+                continue
             if any(marker in text for marker in ("登录", "验证码", "访问控制", "人工检查")):
                 restricted.add(label)
             elif any(marker in text for marker in ("失败", "失效", "未发现", "未读取", "不可用", "超时", "Timeout", "Error")):
