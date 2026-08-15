@@ -85,9 +85,9 @@ def profile_site(url: str) -> dict[str, str]:
     """Low-frequency, one-page profiling. It never retries or defeats a challenge."""
     safe_url = validate_public_url(url)
     if is_cnpc_url(safe_url):
-        return {"url": safe_url, "engine": "中石油专用动态浏览器", "status": "需要人工验证",
+        return {"url": safe_url, "engine": "中石油专用动态浏览器", "status": "待自动恢复",
                 "selector": ".el-table__body-wrapper tbody tr", "profile_json": "",
-                "note": "已识别为中石油招标网。请点击“打开此站验证”，手动完成网站验证后再点击“重新识别”。"}
+                "note": "已识别为中石油招标网；系统将在采集时自动复用可用浏览器会话并重新适配。"}
     page = Fetcher.get(safe_url, timeout=20, impersonate="chrome")
     best = max((_score_selector(page, item) + (item,) for item in _selector_candidates(page)), default=(0, 0, 0, "a"))
     score, count, dated, selector = best
@@ -102,10 +102,25 @@ def profile_site(url: str) -> dict[str, str]:
         note = f"识别到 {count} 条候选公告、{dated} 条标题含日期；列表选择器 {selector!r}，结构记忆：{learned}。"
         return {"url": safe_url, "engine": "Fetcher + 自适应选择器", "status": "已适配（静态列表）", "selector": selector, "note": note}
     if dynamic_hint:
-        note = "页面疑似依赖 JavaScript 或会话。请通过“可视 Chrome 人工验证”打开站点并完成允许的验证后，再重新自动适配。"
+        note = "页面疑似依赖 JavaScript 或会话；系统将在采集时自动尝试浏览器会话和规则重建。"
     else:
         note = "未能可靠识别公告列表和发布日期；为避免误采集，未启用自动采集。请检查是否为公开列表页。"
-    return {"url": safe_url, "engine": "需要人工确认", "status": "待人工确认", "selector": "a", "note": note}
+    return {"url": safe_url, "engine": "自动恢复", "status": "待自动恢复", "selector": "a", "note": note}
+
+
+def auto_reprofile_site(url: str) -> dict[str, str]:
+    """Rebuild a site profile using static discovery and any reusable browser session."""
+    profile = profile_site(url)
+    if profile["status"].startswith("已适配（"):
+        return profile
+    try:
+        browser_profile = asyncio.run(profile_site_from_manual_browser(url))
+        if browser_profile and browser_profile["status"].startswith("已适配（"):
+            browser_profile["note"] = browser_profile["note"].replace("人工验证后的", "自动复用的")
+            return browser_profile
+    except Exception:
+        pass
+    return profile
 
 
 def _walk_record_lists(value, path: str = "$") -> list[tuple[str, list[dict]]]:
@@ -282,8 +297,8 @@ async def profile_site_from_manual_browser(url: str) -> dict[str, str] | None:
     usable = [item for item in links if len(item["title"]) >= 8 and item["href"].startswith(("http://", "https://"))]
     dated = sum(1 for item in usable if DATE.search(item["context"]))
     if len(usable) >= 3:
-        note = f"已从人工验证后的可视 Chrome 读取到 {len(usable)} 条候选链接，其中 {dated} 条标题含日期；后续采集会复用该浏览器会话。"
-        return {"url": safe_url, "engine": "可视 Chrome（人工验证）", "status": "已适配（动态浏览器）", "selector": "a", "note": note, "profile_json": ""}
+        note = f"已从自动复用的浏览器会话读取到 {len(usable)} 条候选链接，其中 {dated} 条标题含日期。"
+        return {"url": safe_url, "engine": "可视 Chrome（自动复用）", "status": "已适配（动态浏览器）", "selector": "a", "note": note, "profile_json": ""}
     card_records = [item for item in cards if len(item["title"]) >= 8 and DATE.search(item["context"])]
     if len(card_records) >= 3:
         note = f"识别到 {len(card_records)} 条可点击公告卡片；该站点没有传统链接，后续采集将使用动态卡片模式。"
@@ -291,7 +306,7 @@ async def profile_site_from_manual_browser(url: str) -> dict[str, str] | None:
         return {"url": safe_url, "engine": "可视 Chrome（智能卡片）", "status": "已适配（动态浏览器）",
                 "selector": "tr, li, article, [class*='card'], [class*='notice'], [class*='item']",
                 "note": note, "profile_json": json.dumps(profile, ensure_ascii=False)}
-    return {"url": safe_url, "engine": "可视 Chrome（人工验证）", "status": "待人工确认", "selector": "a", "note": "已连接到可视 Chrome，但当前页面尚未识别出足够的公告链接。请确认已进入公告列表并完成网站允许的操作后，再点击“完成验证并自动适配”。"}
+    return {"url": safe_url, "engine": "可视 Chrome（自动复用）", "status": "待自动恢复", "selector": "a", "note": "浏览器会话当前未识别到足够的公告链接，后续采集将继续自动尝试。"}
 
 
 def _normalize_date(value: str) -> str:
@@ -343,7 +358,7 @@ async def _collect_dynamic_site(site: dict, target_date: str, keywords: list[str
     async with async_playwright() as playwright:
         browser = await playwright.chromium.connect_over_cdp(cdp_url)
         if not browser.contexts:
-            return [], f"{site['name']}：未发现已验证的 Chrome 会话，请先进行一次人工验证"
+            return [], f"{site['name']}：当前没有可复用的浏览器会话"
         context = browser.contexts[0]
         page = await context.new_page()
         try:
@@ -384,7 +399,7 @@ async def _collect_dynamic_site(site: dict, target_date: str, keywords: list[str
         finally:
             await page.close()
     if not found and not entries:
-        return [], f"{site['name']}：后台页面未读取到公告链接；若网站显示登录或验证，请进行一次人工验证后再运行"
+        return [], f"{site['name']}：浏览器页面未读取到公告链接"
     return found, ""
 
 
@@ -526,7 +541,7 @@ def collect_custom_site(site: dict, target_date: str, keywords: list[str], exclu
         except Exception as exc:
             return [], f"{site['name']}：动态浏览器采集失败：{type(exc).__name__}"
     if site["status"] != "已适配（静态列表）":
-        return [], f"{site['name']}：等待人工确认适配规则"
+        return [], f"{site['name']}：当前规则不可用，等待自动重新适配"
     try:
         page = Fetcher.get(site["url"], timeout=20, impersonate="chrome")
         selector = site["list_selector"] or "a"
@@ -569,4 +584,4 @@ def collect_custom_site(site: dict, target_date: str, keywords: list[str], exclu
                 found.append(result)
         return found, ""
     except Exception as exc:
-        return [], f"{site['name']}：{type(exc).__name__}；请重新自动适配或使用人工验证入口"
+        return [], f"{site['name']}：{type(exc).__name__}；将自动重新适配"

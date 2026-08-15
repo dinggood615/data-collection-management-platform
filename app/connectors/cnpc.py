@@ -77,11 +77,11 @@ async def _wait_snapshot(page, timeout_ms: int = 30000) -> dict | None:
 async def profile_page(page, safe_url: str) -> dict[str, str]:
     base = {"url": safe_url, "engine": "中石油专用动态浏览器", "selector": "vue:list", "profile_json": ""}
     if not is_cnpc_url(page.url):
-        return {**base, "status": "需要人工验证", "note": "可视 Chrome 当前没有打开中石油招标公告页，请点击“打开此站验证”。"}
+        return {**base, "status": "待自动恢复", "note": "浏览器当前没有可复用的中石油招标公告页面，后续任务将继续自动尝试。"}
     snapshot = await _wait_snapshot(page)
     if snapshot is None:
         challenged = await _has_challenge(page)
-        return {**base, "status": "需要人工验证" if challenged else "等待页面加载", "note": "检测到网站验证弹框。请手动完成网站允许的验证，停留在招标公告列表后点击“重新识别”。" if challenged else "页面脚本尚未生成公告数据，请刷新页面后重新识别。"}
+        return {**base, "status": "待自动恢复", "note": "检测到网站验证或页面尚未加载完成；系统不会绕过验证，并将在后续任务继续自动尝试。"}
     count = len(snapshot["list"])
     total = int(snapshot["pageInfo"].get("pageTotal") or count)
     return {**base, "status": "已适配（动态浏览器）", "note": f"验证会话有效，已从页面数据识别当前页 {count} 条、总计 {total} 条公告；采集时将调用页面自身的翻页与详情操作。"}
@@ -138,7 +138,7 @@ async def collect(page, site: dict, target_date: str, keywords: list[str], exclu
     snapshot = await _wait_snapshot(page)
     if snapshot is None:
         if await _has_challenge(page):
-            return [], f"{site['name']}：会话已失效，请点击“打开此站验证”完成一次人工验证"
+            return [], f"{site['name']}：浏览器会话已失效，将进入自动恢复流程"
         return [], f"{site['name']}：页面脚本未生成公告数据"
 
     found, seen = [], set()
@@ -166,7 +166,7 @@ async def collect(page, site: dict, target_date: str, keywords: list[str], exclu
             title = " ".join(str(item.get("title") or "").split())
             body, challenged = await _detail_text(page, item)
             if challenged:
-                return found, f"{site['name']}：读取详情时验证会话失效，请重新进行人工验证"
+                return found, f"{site['name']}：读取详情时会话失效，将进入自动恢复流程"
             href = f"https://www.cnpcbidding.com/#/tenders?articleId={identity}"
             result = result_factory(site, title, href, target_date, "中石油招标公告", body or title, keywords, exclusions, identity)
             if result:

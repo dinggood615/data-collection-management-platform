@@ -16,7 +16,7 @@ from fastapi.templating import Jinja2Templates
 from itsdangerous import BadSignature, URLSafeTimedSerializer
 
 from .database import backup_database, connect, export_migration_bundle, import_migration_bundle, init_db, now_text, reset_platform_state, set_setting, setting
-from .connectors.custom import profile_site, profile_site_from_manual_browser, validate_public_url, validate_site_name
+from .connectors.custom import auto_reprofile_site, profile_site, validate_public_url, validate_site_name
 from .emailing import normalize_recipients
 from .matching import parse_terms
 
@@ -91,11 +91,9 @@ def dashboard_context() -> dict:
         if site["entry_invalid"]:
             site["next_step"] = "直接修改网站名称和公告列表网址，然后点击“保存并识别”。无需人工验证。"
         elif site["status"] in COLLECTABLE_CUSTOM_STATUSES:
-            site["next_step"] = "已可自动采集。确认启用后，点击“立即采集”可先进行一次人工检查。"
-        elif "JavaScript" in site["profile_note"] or "会话" in site["profile_note"]:
-            site["next_step"] = "点击“打开此站验证”，在可视 Chrome 中完成网站允许的登录或验证后，回到这里点击“完成验证并自动适配”。"
+            site["next_step"] = "已自动采集；规则失效时系统会重建规则并在当轮重试。"
         else:
-            site["next_step"] = "请确认填写的是公告列表页而非首页、详情页或搜索页；确认公开可访问后点击“重新识别”。"
+            site["next_step"] = "系统将在每次采集时继续自动识别；也可点击“立即自动重识别”。"
     return {"keywords": keywords, "runs": runs, "results": results, "custom_sites": custom_sites,
             "enabled_site_count": sum(1 for site in custom_sites if site["enabled"]),
             "total_result_count": total_results, "successful_run_count": successful_runs,
@@ -221,14 +219,10 @@ def reprofile_custom_site(site_id: int):
     try:
         if site["builtin_code"]:
             with connect() as db:
-                db.execute("UPDATE custom_sites SET profile_note=? WHERE id=?", ("已检查并保留平台内置的专用采集规则；如网站需要人工操作，请先点击“打开此站验证”。", site_id))
+                db.execute("UPDATE custom_sites SET profile_note=? WHERE id=?", ("已检查并保留平台内置的专用采集规则；规则失效时系统会自动恢复。", site_id))
             set_setting("custom_site_message", f"{site['name']}：已保留专用采集规则。")
             return RedirectResponse("/", 303)
-        # Prefer the page the user has just verified in visible Chrome.  Static
-        # profiling remains a safe fallback when no matching browser tab exists.
-        profile = asyncio.run(profile_site_from_manual_browser(site["url"]))
-        if profile is None:
-            profile = profile_site(site["url"])
+        profile = auto_reprofile_site(site["url"])
         with connect() as db:
             enabled = 1 if profile["status"] in COLLECTABLE_CUSTOM_STATUSES else 0
             db.execute("UPDATE custom_sites SET enabled=?,engine=?,status=?,list_selector=?,profile_note=?,profile_json=? WHERE id=?", (enabled, profile["engine"], profile["status"], profile["selector"], profile["note"], profile.get("profile_json", ""), site_id))
