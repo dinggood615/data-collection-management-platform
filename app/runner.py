@@ -9,11 +9,49 @@ from urllib.request import Request, urlopen
 from datetime import datetime
 from email.message import EmailMessage
 
-from .connectors.custom import collect_custom_site
+from .connectors.custom import auto_reprofile_site, collect_custom_site
 from .connectors.plugins import collect_plugins
 from .database import connect, setting
 from .emailing import normalize_recipients
 from .matching import evaluate_relevance, parse_terms
+
+
+COLLECTABLE_CUSTOM_STATUSES = {"已适配（静态列表）", "已适配（动态浏览器）", "已适配（公开数据接口）"}
+
+
+def _collect_custom_with_recovery(site: dict, target_date: str, keywords: list[str], exclusions: list[str]) -> tuple[list[dict], str]:
+    """Collect once, then rebuild and retry a broken custom-site profile."""
+    batch, warning = collect_custom_site(site, target_date, keywords, exclusions)
+    if not warning:
+        if site.get("failure_count"):
+            with connect() as db:
+                db.execute("UPDATE custom_sites SET failure_count=0,last_failure_at='' WHERE id=?", (site["id"],))
+        return batch, ""
+    failed_at = datetime.now().astimezone().isoformat(timespec="seconds")
+    with connect() as db:
+        db.execute("UPDATE custom_sites SET failure_count=failure_count+1,last_failure_at=? WHERE id=?",
+                   (failed_at, site["id"]))
+    try:
+        profile = auto_reprofile_site(site["url"])
+    except Exception as exc:
+        return batch, f"{warning}；自动重新适配失败：{type(exc).__name__}，下次采集将继续尝试"
+    if profile["status"] not in COLLECTABLE_CUSTOM_STATUSES:
+        with connect() as db:
+            db.execute("UPDATE custom_sites SET profile_note=? WHERE id=?",
+                       (f"自动恢复尚未找到稳定规则：{profile['note']}", site["id"]))
+        return batch, f"{warning}；自动恢复尚未完成，下次采集将继续尝试"
+    recovered = {**site, "engine": profile["engine"], "status": profile["status"],
+                 "list_selector": profile["selector"], "profile_note": profile["note"],
+                 "profile_json": profile.get("profile_json", ""), "failure_count": 0}
+    with connect() as db:
+        db.execute("""UPDATE custom_sites SET enabled=1,engine=?,status=?,list_selector=?,profile_note=?,profile_json=?,
+                   failure_count=0,last_failure_at='',last_adapted_at=? WHERE id=?""",
+                   (recovered["engine"], recovered["status"], recovered["list_selector"], recovered["profile_note"],
+                    recovered["profile_json"], failed_at, site["id"]))
+    retry_batch, retry_warning = collect_custom_site(recovered, target_date, keywords, exclusions)
+    if retry_warning:
+        return batch, f"{warning}；规则已自动更新，但当轮重试仍失败：{retry_warning}"
+    return retry_batch, f"{site['name']}：失效规则已自动更新并在当轮恢复采集"
 
 
 def collect_enabled_sites(target_date: str, send_email: bool = True) -> tuple[int, int, str]:
@@ -25,7 +63,7 @@ def collect_enabled_sites(target_date: str, send_email: bool = True) -> tuple[in
     exclusions = parse_terms(setting("exclude_terms"))
     items, notices = [], []
     for site in (item for item in custom_sites if not item.get("builtin_code")):
-        batch, warning = collect_custom_site(site, target_date, keywords, exclusions)
+        batch, warning = _collect_custom_with_recovery(site, target_date, keywords, exclusions)
         items.extend(batch)
         if warning:
             notices.append(warning)
