@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import re
 from datetime import date
 from urllib.parse import urlparse
@@ -23,6 +24,8 @@ VUE_COMPONENT = """() => {
   walk(root);
   return hit;
 }"""
+TITLE_FIELDS = ("title", "noticeTitle", "projectName", "name")
+DATE_FIELDS = ("publishedTime", "publishTime", "publishDate", "releaseTime", "createTime", "date")
 
 
 def is_cnpc_url(url: str) -> bool:
@@ -74,11 +77,66 @@ async def _wait_snapshot(page, timeout_ms: int = 30000) -> dict | None:
     return None
 
 
+def _record_value(record: dict, fields: tuple[str, ...]):
+    lowered = {str(key).lower(): value for key, value in record.items()}
+    return next((lowered[field.lower()] for field in fields if lowered.get(field.lower()) not in (None, "")), "")
+
+
+def _record_lists(value) -> list[list[dict]]:
+    found: list[list[dict]] = []
+    if isinstance(value, dict):
+        for child in value.values():
+            found.extend(_record_lists(child))
+    elif isinstance(value, list):
+        records = [item for item in value if isinstance(item, dict)]
+        if records and any(_record_value(item, TITLE_FIELDS) and _record_value(item, DATE_FIELDS) for item in records):
+            found.append(records)
+        for child in value:
+            if not isinstance(child, dict):
+                found.extend(_record_lists(child))
+    return found
+
+
+async def _capture_public_records(page, safe_url: str, wait_ms: int = 10000) -> list[dict]:
+    """Observe public JSON produced by the current CNPC page without relying on Vue internals."""
+    records: list[dict] = []
+    tasks: list[asyncio.Task] = []
+
+    async def inspect(response) -> None:
+        try:
+            if response.status >= 400 or "json" not in response.headers.get("content-type", "").lower():
+                return
+            candidates = _record_lists(await response.json())
+            if candidates:
+                records.extend(max(candidates, key=len))
+        except Exception:
+            return
+
+    page.on("response", lambda response: tasks.append(asyncio.create_task(inspect(response))))
+    try:
+        await page.goto(safe_url, wait_until="domcontentloaded", timeout=60000)
+    except Exception:
+        pass
+    await page.wait_for_timeout(wait_ms)
+    if tasks:
+        await asyncio.gather(*tasks, return_exceptions=True)
+    unique: dict[str, dict] = {}
+    for record in records:
+        identity = str(record.get("id") or record.get("articleId") or _record_value(record, TITLE_FIELDS))
+        if identity:
+            unique[identity] = record
+    return list(unique.values())
+
+
 async def profile_page(page, safe_url: str) -> dict[str, str]:
     base = {"url": safe_url, "engine": "中石油专用动态浏览器", "selector": "vue:list", "profile_json": ""}
     if not is_cnpc_url(page.url):
         return {**base, "status": "待自动恢复", "note": "浏览器当前没有可复用的中石油招标公告页面，后续任务将继续自动尝试。"}
-    snapshot = await _wait_snapshot(page)
+    records = await _capture_public_records(page, safe_url)
+    if records:
+        return {**base, "status": "已适配（动态浏览器）", "selector": "network:json",
+                "note": f"已从页面公开数据流识别 {len(records)} 条公告；采集不再依赖旧版 Vue 组件结构。"}
+    snapshot = await _wait_snapshot(page, timeout_ms=8000)
     if snapshot is None:
         challenged = await _has_challenge(page)
         return {**base, "status": "待自动恢复", "note": "检测到网站验证或页面尚未加载完成；系统不会绕过验证，并将在后续任务继续自动尝试。"}
@@ -134,6 +192,21 @@ async def _detail_text(page, item: dict) -> tuple[str, bool]:
 
 
 async def collect(page, site: dict, target_date: str, keywords: list[str], exclusions: list[str], result_factory, max_pages: int = 30):
+    records = await _capture_public_records(page, site["url"])
+    if records:
+        found = []
+        for item in records:
+            published_text = str(_record_value(item, DATE_FIELDS))
+            if _normal_date(published_text) != target_date:
+                continue
+            title = " ".join(str(_record_value(item, TITLE_FIELDS)).split())
+            identity = str(item.get("id") or item.get("articleId") or f"{title}-{published_text}")
+            body = " ".join(str(value) for value in item.values() if value is not None)
+            href = f"https://www.cnpcbidding.com/#/tenders?articleId={identity}"
+            result = result_factory(site, title, href, target_date, "中石油招标公告", body, keywords, exclusions, identity)
+            if result:
+                found.append(result)
+        return found, ""
     await page.goto(site["url"], wait_until="domcontentloaded", timeout=60000)
     snapshot = await _wait_snapshot(page)
     if snapshot is None:
