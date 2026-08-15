@@ -93,3 +93,8 @@ def test_inference_is_single_turn_and_bounded(monkeypatch):
     assert result["confidence"] == 80
     assert "--single-turn" in captured["command"]
     assert captured["kwargs"]["timeout"] == local_model.MODEL_TIMEOUT
+
+
+def test_json_parser_uses_last_complete_model_object():
+    output = 'prompt example {"confidence":"0到100"}\nmodel answer {"confidence":87,"category":"信息化"}\n'
+    assert local_model._extract_json(output) == {"confidence": 87, "category": "信息化"}
