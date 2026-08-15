@@ -53,3 +53,43 @@ def test_unsuccessful_reprofile_keeps_old_rule(monkeypatch, tmp_path):
     assert updated["list_selector"] == ".old-list a"
     assert updated["status"] == "已适配（静态列表）"
     assert updated["failure_count"] == 1
+
+
+def test_recovery_runs_only_once_per_collection_round(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "platform.sqlite3"))
+    init_db()
+    site = _site()
+    attempts = set()
+    profile_calls = []
+    monkeypatch.setattr(runner, "collect_custom_site", lambda *_args: ([], "测试站点：暂时失败"))
+    monkeypatch.setattr(runner, "auto_reprofile_site", lambda url: profile_calls.append(url) or {
+        "engine": "自动恢复", "status": "待自动恢复", "selector": "a", "note": "尚未识别",
+    })
+    runner._collect_custom_with_recovery(site, "2026-08-15", ["软件"], [], attempts)
+    _items, notice = runner._collect_custom_with_recovery(site, "2026-08-14", ["软件"], [], attempts)
+    assert len(profile_calls) == 1
+    assert "不再重复等待" in notice
+
+
+def test_historical_run_only_repeats_date_capable_custom_sites(monkeypatch, tmp_path):
+    monkeypatch.setenv("DATABASE_PATH", str(tmp_path / "platform.sqlite3"))
+    init_db()
+    with connect() as db:
+        db.execute("INSERT INTO keywords(term) VALUES('软件')")
+        for name, url, status in (
+            ("公开接口", "https://api.example.com/notices", "已适配（公开数据接口）"),
+            ("动态页面", "https://browser.example.com/notices", "已适配（动态浏览器）"),
+            ("静态页面", "https://static.example.com/notices", "已适配（静态列表）"),
+        ):
+            db.execute("""INSERT INTO custom_sites(name,url,status,created_at)
+                        VALUES(?,?,?,?)""", (name, url, status, "2026-08-15T00:00:00+08:00"))
+    collected = []
+
+    def fake_timed(site, *_args):
+        collected.append(site["name"])
+        return [], ""
+
+    monkeypatch.setattr(runner, "_collect_custom_timed", fake_timed)
+    monkeypatch.setattr(runner, "collect_plugins", lambda *_args: ([], []))
+    runner.collect_enabled_sites("2026-08-14", send_email=False, historical=True)
+    assert collected == ["公开接口"]

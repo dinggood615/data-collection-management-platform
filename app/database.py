@@ -78,6 +78,9 @@ def init_db() -> None:
             failure_count INTEGER NOT NULL DEFAULT 0,
             last_failure_at TEXT NOT NULL DEFAULT '',
             last_adapted_at TEXT NOT NULL DEFAULT '',
+            last_duration_ms INTEGER NOT NULL DEFAULT 0,
+            last_item_count INTEGER NOT NULL DEFAULT 0,
+            last_run_at TEXT NOT NULL DEFAULT '',
             builtin_code TEXT,
             created_at TEXT NOT NULL
         );
@@ -91,6 +94,9 @@ def init_db() -> None:
             ("failure_count", "INTEGER NOT NULL DEFAULT 0"),
             ("last_failure_at", "TEXT NOT NULL DEFAULT ''"),
             ("last_adapted_at", "TEXT NOT NULL DEFAULT ''"),
+            ("last_duration_ms", "INTEGER NOT NULL DEFAULT 0"),
+            ("last_item_count", "INTEGER NOT NULL DEFAULT 0"),
+            ("last_run_at", "TEXT NOT NULL DEFAULT ''"),
         ):
             if name not in columns:
                 db.execute(f"ALTER TABLE custom_sites ADD COLUMN {name} {declaration}")

@@ -5,6 +5,8 @@ import os
 import smtplib
 import ssl
 import json
+import time
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.request import Request, urlopen
 from datetime import datetime
 from email.message import EmailMessage
@@ -19,7 +21,8 @@ from .matching import evaluate_relevance, parse_terms
 COLLECTABLE_CUSTOM_STATUSES = {"已适配（静态列表）", "已适配（动态浏览器）", "已适配（公开数据接口）"}
 
 
-def _collect_custom_with_recovery(site: dict, target_date: str, keywords: list[str], exclusions: list[str]) -> tuple[list[dict], str]:
+def _collect_custom_with_recovery(site: dict, target_date: str, keywords: list[str], exclusions: list[str],
+                                  recovery_attempted: set[int] | None = None) -> tuple[list[dict], str]:
     """Collect once, then rebuild and retry a broken custom-site profile."""
     batch, warning = collect_custom_site(site, target_date, keywords, exclusions)
     if not warning:
@@ -27,6 +30,10 @@ def _collect_custom_with_recovery(site: dict, target_date: str, keywords: list[s
             with connect() as db:
                 db.execute("UPDATE custom_sites SET failure_count=0,last_failure_at='' WHERE id=?", (site["id"],))
         return batch, ""
+    if recovery_attempted is not None and site["id"] in recovery_attempted:
+        return batch, f"{warning}；本轮已尝试自动恢复，不再重复等待"
+    if recovery_attempted is not None:
+        recovery_attempted.add(site["id"])
     failed_at = datetime.now().astimezone().isoformat(timespec="seconds")
     with connect() as db:
         db.execute("UPDATE custom_sites SET failure_count=failure_count+1,last_failure_at=? WHERE id=?",
@@ -54,7 +61,20 @@ def _collect_custom_with_recovery(site: dict, target_date: str, keywords: list[s
     return retry_batch, f"{site['name']}：失效规则已自动更新并在当轮恢复采集"
 
 
-def collect_enabled_sites(target_date: str, send_email: bool = True) -> tuple[int, int, str]:
+def _collect_custom_timed(site: dict, target_date: str, keywords: list[str], exclusions: list[str],
+                          recovery_attempted: set[int]) -> tuple[list[dict], str]:
+    started = time.monotonic()
+    try:
+        return _collect_custom_with_recovery(site, target_date, keywords, exclusions, recovery_attempted)
+    finally:
+        duration_ms = round((time.monotonic() - started) * 1000)
+        with connect() as db:
+            db.execute("UPDATE custom_sites SET last_duration_ms=?,last_run_at=? WHERE id=?",
+                       (duration_ms, datetime.now().astimezone().isoformat(timespec="seconds"), site["id"]))
+
+
+def collect_enabled_sites(target_date: str, send_email: bool = True, *, historical: bool = False,
+                          recovery_attempted: set[int] | None = None) -> tuple[int, int, str]:
     with connect() as db:
         keywords = [row["term"] for row in db.execute("SELECT term FROM keywords WHERE enabled=1")]
         custom_sites = [dict(row) for row in db.execute("SELECT * FROM custom_sites WHERE enabled=1")]
@@ -62,9 +82,33 @@ def collect_enabled_sites(target_date: str, send_email: bool = True) -> tuple[in
         return 0, 0, "尚未设置核心关键词，本次未访问采集站点"
     exclusions = parse_terms(setting("exclude_terms"))
     items, notices = [], []
-    for site in (item for item in custom_sites if not item.get("builtin_code")):
-        batch, warning = _collect_custom_with_recovery(site, target_date, keywords, exclusions)
+    recovery_attempted = recovery_attempted if recovery_attempted is not None else set()
+    custom = [item for item in custom_sites if not item.get("builtin_code")]
+    if historical:
+        custom = [item for item in custom if item["status"] == "已适配（公开数据接口）"]
+    parallel = [item for item in custom if item["status"] != "已适配（动态浏览器）"]
+    browser = [item for item in custom if item["status"] == "已适配（动态浏览器）"]
+    workers = max(1, min(int(os.getenv("CUSTOM_SITE_WORKERS", "3")), 4))
+    results: list[tuple[dict, list[dict], str]] = []
+    with ThreadPoolExecutor(max_workers=workers, thread_name_prefix="custom-site") as pool:
+        futures = {pool.submit(_collect_custom_timed, site, target_date, keywords, exclusions, recovery_attempted): site
+                   for site in parallel}
+        # Keep browser work single-file, but overlap it with independent HTTP
+        # collectors so the VPS spends less time idle on network responses.
+        for site in browser:
+            batch, warning = _collect_custom_timed(site, target_date, keywords, exclusions, recovery_attempted)
+            results.append((site, batch, warning))
+        for future in as_completed(futures):
+            site = futures[future]
+            try:
+                batch, warning = future.result()
+            except Exception as exc:
+                batch, warning = [], f"{site['name']}：并发采集失败：{type(exc).__name__}"
+            results.append((site, batch, warning))
+    for site, batch, warning in results:
         items.extend(batch)
+        with connect() as db:
+            db.execute("UPDATE custom_sites SET last_item_count=? WHERE id=?", (len(batch), site["id"]))
         if warning:
             notices.append(warning)
     enabled_codes = {site["builtin_code"] for site in custom_sites if site.get("builtin_code")}
