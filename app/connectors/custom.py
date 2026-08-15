@@ -248,10 +248,22 @@ async def profile_site_from_manual_browser(url: str) -> dict[str, str] | None:
         browser = await playwright.chromium.connect_over_cdp(cdp_url)
         pages = [page for context in browser.contexts for page in context.pages]
         page = next((item for item in reversed(pages) if urlparse(item.url).netloc.lower() == expected_host), None)
+        owns_page = page is None
         if page is None:
-            return None
+            if not browser.contexts:
+                return None
+            page = await browser.contexts[0].new_page()
+            try:
+                await page.goto(safe_url, wait_until="domcontentloaded", timeout=45000)
+                await page.wait_for_timeout(1800)
+            except Exception:
+                pass
         if is_cnpc_url(safe_url):
-            return await profile_cnpc_page(page, safe_url)
+            try:
+                return await profile_cnpc_page(page, safe_url)
+            finally:
+                if owns_page:
+                    await page.close()
         api_candidates: list[dict] = []
 
         async def inspect_response(response) -> None:
@@ -270,7 +282,10 @@ async def profile_site_from_manual_browser(url: str) -> dict[str, str] | None:
         page.on("response", inspect_response)
         # Reload once so response listeners can observe the same public requests
         # the page itself makes. No challenge solving, credentials or headers are captured.
-        await page.reload(wait_until="domcontentloaded", timeout=45000)
+        try:
+            await page.reload(wait_until="domcontentloaded", timeout=45000)
+        except Exception:
+            pass
         await page.wait_for_timeout(1800)
         links = await page.locator("a[href]").evaluate_all(
             """items => items.slice(0, 250).map(item => ({
@@ -287,6 +302,8 @@ async def profile_site_from_manual_browser(url: str) -> dict[str, str] | None:
             })"""
         )
 
+    if owns_page:
+        await page.close()
     if api_candidates:
         api_profile = expand_api_profile(max(api_candidates, key=lambda item: item.get("sample_count", 0)), safe_url)
         feed_note = f"，并展开 {api_profile['feed_count']} 个公告栏目" if api_profile.get("feed_count") else ""
