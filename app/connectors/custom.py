@@ -557,6 +557,8 @@ def collect_custom_site(site: dict, target_date: str, keywords: list[str], exclu
             elements = soup.select("a[href]")
         if not elements:
             elements = soup.select("a[href]")
+        if not elements:
+            return [], f"{site['name']}：页面结构已失效，未发现任何可采集链接"
         candidates, visited = [], set()
         for link in elements:
             title = " ".join(link.get_text(" ", strip=True).split())
