@@ -142,6 +142,11 @@ su -s /bin/bash "$SERVICE_USER" -c "set -a; source '$INSTALL_DIR/.env'; set +a; 
 # Invoke explicitly with bash: Git mirrors may not preserve executable bits.
 bash "$INSTALL_DIR/install-browser.sh" "$INSTALL_DIR" "$SERVICE_USER"
 systemctl is-active --quiet tender-manual-browser.service || die "可视 Chrome 服务未能启动，请检查 tender-manual-browser.service 日志"
+if [ "${INSTALL_LOCAL_MODEL:-1}" = "1" ]; then
+  INSTALL_DIR="$INSTALL_DIR" SERVICE_USER="$SERVICE_USER" bash "$INSTALL_DIR/install-local-model.sh"
+else
+  echo "已按 INSTALL_LOCAL_MODEL=0 跳过本地模型安装；平台其他功能不受影响。"
+fi
 
 cat >/etc/systemd/system/tender-platform.service <<EOF
 [Unit]
@@ -215,3 +220,4 @@ fi
 verify_https_entry
 echo "完成：访问 https://服务器IP:$PUBLIC_PORT。初始账户 admin/admin，请立即修改。"
 echo "人工验证：在自定义站点卡片点击‘打开此站验证’，无需 SSH 隧道。"
+echo "本地智能：已使用单任务、低优先级和 900MB 内存上限保护现有采集服务。"

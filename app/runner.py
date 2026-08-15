@@ -111,6 +111,12 @@ def collect_enabled_sites(target_date: str, send_email: bool = True, *, historic
             db.execute("UPDATE custom_sites SET last_item_count=? WHERE id=?", (len(batch), site["id"]))
         if warning:
             notices.append(warning)
+            if not batch:
+                try:
+                    from .local_model import enqueue_site_adaptation
+                    enqueue_site_adaptation(site["id"], warning)
+                except Exception:
+                    pass
     enabled_codes = {site["builtin_code"] for site in custom_sites if site.get("builtin_code")}
     plugin_items, plugin_notices = collect_plugins(target_date, enabled_codes, keywords, exclusions)
     items.extend(plugin_items)
@@ -146,6 +152,11 @@ def collect_enabled_sites(target_date: str, send_email: bool = True, *, historic
                  item.get("match_reason", ""), item.get("excerpt", ""), source_item_id, now, revision_hash))
             if not existed:
                 new_items.append(item)
+                try:
+                    from .local_model import enqueue_tender_analysis
+                    enqueue_tender_analysis(fingerprint)
+                except Exception:
+                    pass
         report_items = [dict(row) for row in db.execute(
             "SELECT * FROM tenders WHERE published_date=? ORDER BY relevance_score DESC, first_seen_at DESC",
             (target_date,),

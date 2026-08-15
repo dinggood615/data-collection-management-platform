@@ -64,6 +64,8 @@ async def require_admin(request: Request, call_next):
 
 
 def dashboard_context() -> dict:
+    from .local_model import model_status
+
     with connect() as db:
         keywords = db.execute("SELECT * FROM keywords WHERE enabled=1 ORDER BY term").fetchall()
         runs = db.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 8").fetchall()
@@ -114,12 +116,15 @@ def dashboard_context() -> dict:
             "wecom_push_enabled": setting("wecom_push_enabled", "0") == "1",
             "wecom_callback_url": _wecom_callback_url(),
             "wecom_callback_token_value": setting("wecom_callback_token", secret=True),
-            "wecom_encoding_aes_key_value": setting("wecom_encoding_aes_key", secret=True)}
+            "wecom_encoding_aes_key_value": setting("wecom_encoding_aes_key", secret=True),
+            "local_model": model_status()}
 
 
 @app.on_event("startup")
 def startup() -> None:
     init_db()
+    from .local_model import recover_interrupted_tasks
+    recover_interrupted_tasks()
     scheduler.start()
     reschedule()
 
@@ -604,6 +609,9 @@ def run_collection(send_email: bool = True) -> None:
         matched, new_count, status, message = 0, 0, "failed", f"{type(exc).__name__}: {exc}"
     with connect() as db:
         db.execute("UPDATE runs SET finished_at=?,status=?,matched_count=?,new_count=?,message=? WHERE id=?", (now_text(), status, matched, new_count, message, run_id))
+    if setting("local_model_enabled", "1") == "1":
+        scheduler.add_job(run_local_model_queue, id="local-model-after-collection", replace_existing=True,
+                          max_instances=1, coalesce=True)
 
 
 @app.post("/run")
@@ -627,6 +635,42 @@ def reschedule() -> None:
             scheduler.add_job(run_collection, "cron", hour=int(hour), minute=int(minute), id="daily-run", replace_existing=True)
     backup_hour, backup_minute = setting("backup_schedule", "02:20").split(":")
     scheduler.add_job(run_backup, "cron", hour=int(backup_hour), minute=int(backup_minute), id="daily-backup", replace_existing=True)
+    scheduler.add_job(run_local_model_queue, "interval", minutes=15, id="local-model-queue",
+                      replace_existing=True, max_instances=1, coalesce=True)
+
+
+def run_local_model_queue() -> None:
+    from .local_model import process_pending
+
+    with connect() as db:
+        if db.execute("SELECT 1 FROM runs WHERE status='running' LIMIT 1").fetchone():
+            return
+    process_pending(int(os.getenv("LOCAL_MODEL_BATCH_SIZE", "3")))
+
+
+@app.post("/local-model/run")
+def run_local_model_now():
+    scheduler.add_job(run_local_model_queue, id="local-model-manual", replace_existing=True,
+                      max_instances=1, coalesce=True)
+    set_setting("local_model_message", "已提交本地智能处理任务；模型会在采集空闲时单任务运行。")
+    return RedirectResponse("/#local-model", 303)
+
+
+@app.post("/local-model/toggle")
+def toggle_local_model():
+    enabled = setting("local_model_enabled", "1") == "1"
+    set_setting("local_model_enabled", "0" if enabled else "1")
+    set_setting("local_model_message", "本地智能处理已停用。" if enabled else "本地智能处理已启用。")
+    return RedirectResponse("/#local-model", 303)
+
+
+@app.post("/local-model/clear")
+def clear_local_model_history():
+    from .local_model import clear_finished_tasks
+
+    count = clear_finished_tasks()
+    set_setting("local_model_message", f"已清除 {count} 条已完成或失败的模型任务记录。")
+    return RedirectResponse("/#local-model", 303)
 
 
 def run_backup() -> None:

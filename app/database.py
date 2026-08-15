@@ -84,7 +84,22 @@ def init_db() -> None:
             builtin_code TEXT,
             created_at TEXT NOT NULL
         );
+        CREATE TABLE IF NOT EXISTS model_tasks (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            task_type TEXT NOT NULL,
+            reference_id TEXT NOT NULL DEFAULT '',
+            payload_json TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'queued',
+            result_json TEXT NOT NULL DEFAULT '',
+            message TEXT NOT NULL DEFAULT '',
+            attempts INTEGER NOT NULL DEFAULT 0,
+            created_at TEXT NOT NULL,
+            started_at TEXT NOT NULL DEFAULT '',
+            finished_at TEXT NOT NULL DEFAULT ''
+        );
         """)
+        db.execute("CREATE INDEX IF NOT EXISTS idx_model_tasks_status ON model_tasks(status,id)")
+        db.execute("CREATE INDEX IF NOT EXISTS idx_model_tasks_reference ON model_tasks(task_type,reference_id)")
         columns = {row["name"] for row in db.execute("PRAGMA table_info(custom_sites)")}
         if "builtin_code" not in columns:
             db.execute("ALTER TABLE custom_sites ADD COLUMN builtin_code TEXT")
@@ -110,6 +125,9 @@ def init_db() -> None:
             ("relevance_level", "TEXT NOT NULL DEFAULT ''"),
             ("match_reason", "TEXT NOT NULL DEFAULT ''"),
             ("excerpt", "TEXT NOT NULL DEFAULT ''"),
+            ("ai_category", "TEXT NOT NULL DEFAULT ''"),
+            ("ai_summary", "TEXT NOT NULL DEFAULT ''"),
+            ("ai_confidence", "INTEGER NOT NULL DEFAULT 0"),
         ):
             if column not in tender_columns:
                 db.execute(f"ALTER TABLE tenders ADD COLUMN {column} {declaration}")
@@ -130,6 +148,8 @@ def init_db() -> None:
             ("wecom_push_enabled", os.getenv("WECOM_PUSH_ENABLED", "0")),
             ("wecom_push_message", ""),
             ("exclude_terms", ""),
+            ("local_model_enabled", os.getenv("LOCAL_MODEL_ENABLED", "1")),
+            ("local_model_message", ""),
         )
         for key, value in defaults:
             db.execute("INSERT OR IGNORE INTO settings(key,value) VALUES(?,?)", (key, value))
@@ -165,7 +185,7 @@ def reset_platform_state() -> Path:
             f"SELECT key,value FROM settings WHERE key IN ({','.join('?' for _ in preserved_keys)})",
             preserved_keys,
         ).fetchall()
-        for table in ("tenders", "runs", "keywords", "custom_sites"):
+        for table in ("tenders", "runs", "keywords", "custom_sites", "model_tasks"):
             db.execute(f"DELETE FROM {table}")
         db.execute("DELETE FROM sqlite_sequence WHERE name IN ('runs','custom_sites')")
         db.execute("DELETE FROM settings")

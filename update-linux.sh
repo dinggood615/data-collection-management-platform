@@ -66,6 +66,9 @@ update_started=1
 echo "正在更新 Python 依赖和数据库结构……"
 "$INSTALL_DIR/.venv/bin/pip" install --upgrade pip wheel
 "$INSTALL_DIR/.venv/bin/pip" install -r "$INSTALL_DIR/requirements.txt"
+if [ "${INSTALL_LOCAL_MODEL:-1}" = "1" ]; then
+  INSTALL_DIR="$INSTALL_DIR" SERVICE_USER="$SERVICE_USER" bash "$INSTALL_DIR/install-local-model.sh"
+fi
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
 su -s /bin/bash "$SERVICE_USER" -c "set -a; source '$INSTALL_DIR/.env'; set +a; cd '$INSTALL_DIR'; .venv/bin/python -c 'from app.database import init_db; init_db()'"
 

@@ -16,6 +16,16 @@
 
 面向公开公告列表页的智能数据采集管理平台。平台提供响应式管理控制台、站点自动识别、关键词筛选、数据去重、邮件与企业微信推送、可视浏览器验证、自动备份以及跨服务器一键迁移。通过网页完成配置后，系统可按北京时间定时采集前一天的数据并推送日报。
 
+## 低资源本地智能
+
+原生 Linux 一键安装默认同时部署免费开源的 `Qwen2.5-Coder-0.5B-Instruct Q4_K_M` 与 `llama.cpp` CPU 运行器，不调用任何外部模型服务。模型仅在采集空闲时单任务运行：从规则引擎生成的安全候选中选择站点结构，并对新增结果进行信息化、数字化、软件实施、人力外包分类和短摘要。
+
+- 模型不能生成或执行 Python、Shell、JavaScript，只能返回受约束的 JSON。
+- 新选择器必须在当前页面回放并通过数量校验后才能启用；失败时保留原规则。
+- 默认 1 个 CPU 线程、2048 上下文、900MB 地址空间上限、90 秒超时，每批最多 3 项。
+- 采集任务运行期间模型自动暂停；相同站点或结果不会重复排队。
+- 模型文件约 491MB。若只需要基础采集，可在安装命令前设置 `INSTALL_LOCAL_MODEL=0` 跳过。
+
 > GitHub 发行版采用完全空白的业务初始状态：不包含采集站点、关键词、采集结果、运行记录、邮件定时或企业微信配置。请安装后在网页中按需配置。
 
 ## 全新安装的初始状态
@@ -68,6 +78,15 @@
 ```bash
 curl -fsSL https://raw.githubusercontent.com/dinggood615/data-collection-management-platform/main/install-linux.sh | sudo bash -s -- https://github.com/dinggood615/data-collection-management-platform.git
 ```
+
+安装结束后，管理页“低资源本地智能”区域会显示“模型已就绪”。已有 Linux 安装可单独补装或修复模型：
+
+```bash
+sudo INSTALL_DIR=/opt/data-collection-management-platform bash /opt/data-collection-management-platform/install-local-model.sh
+sudo systemctl restart tender-platform
+```
+
+模型、运行器安装在 `/opt/tender-local-model`，与平台数据库和浏览器会话分离。卸载模型只需停用后台功能后移除该目录，不会删除采集数据。
 
 默认使用 HTTPS 的 `5555` 端口。更换端口示例：
 
