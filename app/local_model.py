@@ -70,13 +70,23 @@ def enqueue_tender_analysis(fingerprint: str) -> bool:
 
 
 def _extract_json(text: str) -> dict:
-    match = re.search(r"\{.*\}", text, re.DOTALL)
-    if not match:
-        raise ValueError("model did not return JSON")
-    value = json.loads(match.group(0))
-    if not isinstance(value, dict):
-        raise ValueError("model result is not an object")
-    return value
+    # Recent llama-cli builds may echo the prompt's JSON example before the
+    # generated object. Decode every complete object and trust only the last
+    # one; task-specific code still applies strict selector/category allowlists.
+    decoder = json.JSONDecoder()
+    objects = []
+    for index, character in enumerate(text):
+        if character != "{":
+            continue
+        try:
+            value, _end = decoder.raw_decode(text[index:])
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            objects.append(value)
+    if not objects:
+        raise ValueError("model did not return a complete JSON object")
+    return objects[-1]
 
 
 def _infer(prompt: str, max_tokens: int = 256) -> dict:
