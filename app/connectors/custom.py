@@ -333,12 +333,15 @@ def _result_item(site: dict, title: str, href: str, target_date: str, notice_typ
 
 
 def _response_text(response) -> str:
-    for attribute in ("text", "body"):
+    # Scrapling's Response.text can be an empty TextHandler even when the raw
+    # response body is complete. Prefer the actual body and never stop on an
+    # empty string-like wrapper, otherwise valid pages look structurally empty.
+    for attribute in ("body", "html_content", "text"):
         value = getattr(response, attribute, "")
-        if isinstance(value, bytes):
+        if isinstance(value, bytes) and value:
             return value.decode("utf-8", errors="replace")
-        if isinstance(value, str):
-            return value
+        if isinstance(value, str) and value.strip():
+            return str(value)
     return ""
 
 
