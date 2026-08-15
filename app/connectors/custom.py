@@ -85,9 +85,9 @@ def profile_site(url: str) -> dict[str, str]:
     """Low-frequency, one-page profiling. It never retries or defeats a challenge."""
     safe_url = validate_public_url(url)
     if is_cnpc_url(safe_url):
-        return {"url": safe_url, "engine": "中石油专用动态浏览器", "status": "待自动恢复",
-                "selector": ".el-table__body-wrapper tbody tr", "profile_json": "",
-                "note": "已识别为中石油招标网；系统将在采集时自动复用可用浏览器会话并重新适配。"}
+        return {"url": safe_url, "engine": "中石油专用动态浏览器", "status": "已适配（动态浏览器）",
+                "selector": "network:json", "profile_json": "",
+                "note": "已匹配中石油公开公告数据流；接口临时超时时自动延后，恢复后无需人工操作即可继续采集。"}
     page = Fetcher.get(safe_url, timeout=20, impersonate="chrome")
     best = max((_score_selector(page, item) + (item,) for item in _selector_candidates(page)), default=(0, 0, 0, "a"))
     score, count, dated, selector = best

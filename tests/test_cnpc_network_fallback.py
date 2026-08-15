@@ -1,6 +1,7 @@
 from pathlib import Path
 
 from app.connectors.cnpc import DATE_FIELDS, TITLE_FIELDS, _record_lists, _record_value
+from app.connectors.custom import profile_site
 
 
 def test_cnpc_finds_records_in_nested_public_json():
@@ -21,3 +22,12 @@ def test_navigation_matches_visible_section_order():
     anchors = ["#results", "#activity", "#sites", "#local-model", "#delivery", "#system"]
 
     assert [navigation.index(anchor) for anchor in anchors] == sorted(navigation.index(anchor) for anchor in anchors)
+
+
+def test_cnpc_is_enabled_as_a_resilient_dynamic_adapter(monkeypatch):
+    monkeypatch.setattr("app.connectors.custom.validate_public_url", lambda url: url)
+
+    profile = profile_site("https://www.cnpcbidding.com/#/tenders")
+
+    assert profile["status"] == "已适配（动态浏览器）"
+    assert profile["selector"] == "network:json"
