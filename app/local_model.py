@@ -85,13 +85,13 @@ def _infer(prompt: str, max_tokens: int = 256) -> dict:
     command = [
         str(MODEL_BINARY), "-m", str(MODEL_FILE), "-c", "2048", "-n", str(max_tokens),
         "-t", os.getenv("LOCAL_MODEL_THREADS", "1"), "--temp", "0.1", "--top-p", "0.8",
-        "--no-display-prompt", "--simple-io", "-p", prompt[:16000],
+        "--no-display-prompt", "--simple-io", "--single-turn", "-p", prompt[:16000],
     ]
     def resource_limits() -> None:
         try:
             import resource
             os.nice(10)
-            memory_limit = max(700, min(int(os.getenv("LOCAL_MODEL_MEMORY_MB", "900")), 1100)) * 1024 * 1024
+            memory_limit = max(1050, min(int(os.getenv("LOCAL_MODEL_MEMORY_MB", "1050")), 1200)) * 1024 * 1024
             resource.setrlimit(resource.RLIMIT_AS, (memory_limit, memory_limit))
         except (ImportError, OSError, ValueError):
             pass

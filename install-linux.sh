@@ -220,4 +220,4 @@ fi
 verify_https_entry
 echo "完成：访问 https://服务器IP:$PUBLIC_PORT。初始账户 admin/admin，请立即修改。"
 echo "人工验证：在自定义站点卡片点击‘打开此站验证’，无需 SSH 隧道。"
-echo "本地智能：已使用单任务、低优先级和 900MB 内存上限保护现有采集服务。"
+echo "本地智能：已使用单任务、低优先级和 1050MB 地址空间上限保护现有采集服务。"

@@ -8,6 +8,7 @@ MODEL_DIR="${LOCAL_MODEL_DIR:-/opt/tender-local-model}"
 SERVICE_USER="${SERVICE_USER:-tenderplatform}"
 MODEL_FILE="$MODEL_DIR/models/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf"
 MODEL_URL="${LOCAL_MODEL_URL:-https://huggingface.co/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/main/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf?download=true}"
+MODEL_MIRROR_URL="${LOCAL_MODEL_MIRROR_URL:-https://modelscope.cn/models/Qwen/Qwen2.5-Coder-0.5B-Instruct-GGUF/resolve/master/qwen2.5-coder-0.5b-instruct-q4_k_m.gguf}"
 
 case "$(uname -m)" in
   x86_64|amd64) ASSET_PATTERN='bin-ubuntu-x64.tar.gz$' ;;
@@ -46,12 +47,30 @@ PY
   binary="$(find "$temporary" -type f -name llama-cli -perm -u+x | head -1)"
   [ -n "$binary" ] || { echo "llama.cpp 发行包中未找到 llama-cli。" >&2; exit 1; }
   install -m 755 "$binary" "$MODEL_DIR/bin/llama-cli"
-  find "$(dirname "$binary")" -maxdepth 1 -type f -name '*.so*' -exec install -m 755 {} "$MODEL_DIR/bin/" \;
+  for library in "$(dirname "$binary")"/*.so*; do
+    [ -e "$library" ] || [ -L "$library" ] || continue
+    cp -a "$library" "$MODEL_DIR/bin/"
+  done
+fi
+
+# Release archives and locally compiled builds use versioned shared objects.
+# Rebuild missing SONAME links so llama-cli remains portable after installation.
+if command -v readelf >/dev/null; then
+  for library in "$MODEL_DIR/bin"/*.so.*; do
+    [ -f "$library" ] || continue
+    soname="$(readelf -d "$library" 2>/dev/null | sed -n 's/.*SONAME.*\[\(.*\)\].*/\1/p')"
+    if [ -n "$soname" ] && [ "$soname" != "$(basename "$library")" ]; then
+      ln -sfn "$(basename "$library")" "$MODEL_DIR/bin/$soname"
+    fi
+  done
 fi
 
 if [ ! -s "$MODEL_FILE" ]; then
   echo "正在下载 Qwen2.5-Coder-0.5B-Instruct Q4_K_M（约 491MB）……"
-  curl -fL --retry 4 --connect-timeout 30 "$MODEL_URL" -o "$temporary/model.gguf"
+  if ! curl -fL --retry 3 --connect-timeout 30 "$MODEL_MIRROR_URL" -o "$temporary/model.gguf"; then
+    echo "国内镜像不可用，正在切换到 Hugging Face 官方地址……"
+    curl -fL --retry 4 --connect-timeout 30 "$MODEL_URL" -o "$temporary/model.gguf"
+  fi
   [ "$(wc -c < "$temporary/model.gguf")" -gt 400000000 ] || { echo "模型文件下载不完整。" >&2; exit 1; }
   [ "$(dd if="$temporary/model.gguf" bs=4 count=1 status=none)" = "GGUF" ] || { echo "模型文件格式校验失败。" >&2; exit 1; }
   install -m 644 "$temporary/model.gguf" "$MODEL_FILE"
@@ -62,7 +81,15 @@ if [ -f "$INSTALL_DIR/.env" ]; then
   grep -q '^LOCAL_MODEL_ENABLED=' "$INSTALL_DIR/.env" || printf '\nLOCAL_MODEL_ENABLED=1\n' >> "$INSTALL_DIR/.env"
   grep -q '^LOCAL_MODEL_BINARY=' "$INSTALL_DIR/.env" || printf 'LOCAL_MODEL_BINARY=%s\n' "$MODEL_DIR/bin/llama-cli" >> "$INSTALL_DIR/.env"
   grep -q '^LOCAL_MODEL_PATH=' "$INSTALL_DIR/.env" || printf 'LOCAL_MODEL_PATH=%s\n' "$MODEL_FILE" >> "$INSTALL_DIR/.env"
-  grep -q '^LOCAL_MODEL_THREADS=' "$INSTALL_DIR/.env" || printf 'LOCAL_MODEL_THREADS=1\nLOCAL_MODEL_MEMORY_MB=900\nLOCAL_MODEL_BATCH_SIZE=3\n' >> "$INSTALL_DIR/.env"
+  grep -q '^LOCAL_MODEL_THREADS=' "$INSTALL_DIR/.env" || printf 'LOCAL_MODEL_THREADS=1\nLOCAL_MODEL_BATCH_SIZE=3\n' >> "$INSTALL_DIR/.env"
+  if grep -q '^LOCAL_MODEL_MEMORY_MB=' "$INSTALL_DIR/.env"; then
+    configured_memory="$(sed -n 's/^LOCAL_MODEL_MEMORY_MB=//p' "$INSTALL_DIR/.env" | tail -1)"
+    if ! printf '%s' "$configured_memory" | grep -Eq '^[0-9]+$' || [ "$configured_memory" -lt 1050 ]; then
+      sed -i 's/^LOCAL_MODEL_MEMORY_MB=.*/LOCAL_MODEL_MEMORY_MB=1050/' "$INSTALL_DIR/.env"
+    fi
+  else
+    printf 'LOCAL_MODEL_MEMORY_MB=1050\n' >> "$INSTALL_DIR/.env"
+  fi
   chown "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR/.env"
   chmod 600 "$INSTALL_DIR/.env"
 fi

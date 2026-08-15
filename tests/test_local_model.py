@@ -72,3 +72,24 @@ def test_pending_analysis_updates_structured_fields(monkeypatch, tmp_path):
     assert item["ai_confidence"] == 88
     assert json.loads(task["result_json"])["category"] == "软件实施"
     assert task["status"] == "completed"
+
+
+def test_inference_is_single_turn_and_bounded(monkeypatch):
+    captured = {}
+
+    class Completed:
+        returncode = 0
+        stdout = '{"category":"其他","summary":"测试","confidence":80}'
+        stderr = ""
+
+    def fake_run(command, **kwargs):
+        captured["command"] = command
+        captured["kwargs"] = kwargs
+        return Completed()
+
+    monkeypatch.setattr(local_model, "model_available", lambda: True)
+    monkeypatch.setattr(local_model.subprocess, "run", fake_run)
+    result = local_model._infer("测试", 32)
+    assert result["confidence"] == 80
+    assert "--single-turn" in captured["command"]
+    assert captured["kwargs"]["timeout"] == local_model.MODEL_TIMEOUT
