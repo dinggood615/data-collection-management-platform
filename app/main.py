@@ -43,8 +43,12 @@ def summarize_run_messages(messages: list[str] | str) -> str:
             if not part or part == "采集完成":
                 continue
             site, separator, detail = part.partition("：")
-            label = site.strip() if separator else part
-            text = detail.strip() if separator else part
+            if not separator:
+                if not any(marker in part for marker in ("失败", "更新", "重试", "失效", "未发现", "未读取")) and part not in notes:
+                    notes.append(part)
+                continue
+            label = site.strip()
+            text = detail.strip()
             if any(marker in text for marker in ("登录", "验证码", "访问控制", "人工检查")):
                 restricted.add(label)
             elif any(marker in text for marker in ("失败", "失效", "未发现", "未读取", "不可用", "超时", "Timeout", "Error")):

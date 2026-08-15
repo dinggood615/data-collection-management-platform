@@ -21,6 +21,7 @@ def test_repeated_recovery_warnings_are_collapsed_by_site():
     assert summary.startswith("自动恢复处理中：")
     assert summary.count("国能") == 1
     assert summary.count("南网招标公告") == 1
+    assert "规则已自动更新" not in summary
     assert "无需人工操作" in summary
 
 
