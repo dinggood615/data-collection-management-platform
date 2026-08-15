@@ -3,6 +3,7 @@ from __future__ import annotations
 import base64
 import asyncio
 import os
+import re
 import secrets
 from datetime import date, datetime, timedelta
 from urllib.parse import urlparse
@@ -27,6 +28,36 @@ scheduler = BackgroundScheduler(timezone="Asia/Shanghai")
 SESSION_COOKIE = "tender_session"
 SESSION_TTL_SECONDS = 8 * 60 * 60
 COLLECTABLE_CUSTOM_STATUSES = {"已适配（静态列表）", "已适配（动态浏览器）", "已适配（公开数据接口）", "已适配（专用采集器）"}
+
+
+def summarize_run_messages(messages: list[str] | str) -> str:
+    """Collapse repeated retries into a short, actionable dashboard status."""
+    values = [messages] if isinstance(messages, str) else messages
+    issues: set[str] = set()
+    restricted: set[str] = set()
+    notes: list[str] = []
+    for value in values:
+        normalized = re.sub(r"；回查 \d{4}-\d{2}-\d{2}：", "；", value or "")
+        for part in normalized.split("；"):
+            part = part.strip()
+            if not part or part == "采集完成":
+                continue
+            site, separator, detail = part.partition("：")
+            label = site.strip() if separator else part
+            text = detail.strip() if separator else part
+            if any(marker in text for marker in ("登录", "验证码", "访问控制", "人工检查")):
+                restricted.add(label)
+            elif any(marker in text for marker in ("失败", "失效", "未发现", "未读取", "不可用", "超时", "Timeout", "Error")):
+                issues.add(label)
+            elif part not in notes:
+                notes.append(part)
+    summary: list[str] = []
+    if issues:
+        summary.append(f"自动恢复处理中：{'、'.join(sorted(issues))}；系统已排队重建规则并自动重试，无需人工操作")
+    if restricted:
+        summary.append(f"站点访问限制已自动延后重试：{'、'.join(sorted(restricted))}（不会绕过登录或验证码）")
+    summary.extend(notes[:3])
+    return "；".join(summary) or "采集完成"
 
 
 def session_serializer() -> URLSafeTimedSerializer:
@@ -68,11 +99,13 @@ def dashboard_context() -> dict:
 
     with connect() as db:
         keywords = db.execute("SELECT * FROM keywords WHERE enabled=1 ORDER BY term").fetchall()
-        runs = db.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 8").fetchall()
+        runs = [dict(row) for row in db.execute("SELECT * FROM runs ORDER BY id DESC LIMIT 8")]
         results = db.execute("SELECT * FROM tenders ORDER BY first_seen_at DESC LIMIT 20").fetchall()
         custom_sites = [dict(row) for row in db.execute("SELECT * FROM custom_sites ORDER BY id DESC")]
         total_results = db.execute("SELECT COUNT(*) FROM tenders").fetchone()[0]
         successful_runs = db.execute("SELECT COUNT(*) FROM runs WHERE status='success'").fetchone()[0]
+    for run in runs:
+        run["display_message"] = summarize_run_messages(run.get("message", ""))
     for site in custom_sites:
         if site.get("builtin_code"):
             site["status"] = "已适配（专用采集器）"
@@ -593,6 +626,7 @@ def run_collection(send_email: bool = True) -> None:
         recovery_attempted: set[int] = set()
         matched, new_count, message = collect_enabled_sites(
             target, send_email=send_email, recovery_attempted=recovery_attempted)
+        run_messages = [message]
         recovered = 0
         recheck_days = max(1, min(int(os.getenv("RECHECK_DAYS", "3")), 7))
         for days_ago in range(2, recheck_days + 1):
@@ -601,7 +635,8 @@ def run_collection(send_email: bool = True) -> None:
                 historical_date, send_email=False, historical=True, recovery_attempted=recovery_attempted)
             recovered += historical_new
             if historical_message != "采集完成":
-                message += f"；回查 {historical_date}：{historical_message}"
+                run_messages.append(historical_message)
+        message = summarize_run_messages(run_messages)
         if recovered:
             message += f"；最近 {recheck_days} 天回查补录 {recovered} 条"
         status = "success"
